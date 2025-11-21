@@ -470,15 +470,16 @@ def main():
             target_net.load_state_dict(policy_net.state_dict())
 
         # 8. Logging and Reporting
+        if best_reward == -float('inf') or episode_reward > best_reward:
+            if best_reward != -float('inf'):
+                print(f"New Best Reward! {episode_reward}")
+            best_reward = episode_reward
+            # TODO: Optional: Save model checkpoint here
         if i_episode % 100 == 0:
             print(
                 f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, "
                 f"Total Reward: {episode_reward:.2f}, Epsilon: {max(EPS_END, EPS_START):.4f}"
             )
-            if best_reward == -float('inf') or episode_reward > best_reward:
-                best_reward = episode_reward
-                print(f"New Best Reward! {best_reward}")
-                # TODO: Optional: Save model checkpoint here
 
     end_time = time.time()
     training_duration = end_time - start_time
@@ -488,7 +489,28 @@ def main():
         f"Final Best Reward: {best_reward} over {args.episodes} episodes. "
         f"Total time: {training_duration:.2f} seconds."
     )
-    # TODO: (now) Run a final test episode and display the solved grid
+
+    # --- Run a final test episode and display the solved grid ---
+    print("\n--- Running Final Test Episode ---")
+    state, _ = env.reset()
+    print("Initial Puzzle:")
+    print(env.initial_puzzle)
+
+    for t in range(81):  # Max 81 steps
+        # In test mode, always exploit (no exploration)
+        with torch.no_grad():
+            state_tensor = torch.tensor(
+                state, dtype=torch.float32).unsqueeze(0)
+            q_values = policy_net(state_tensor)
+            action = q_values.argmax().item()
+
+        observation, _, terminated, truncated, _ = env.step(action)
+        state = observation
+        if terminated or truncated:
+            break
+
+    print("\nFinal Grid:")
+    env.render()
 
 
 if __name__ == "__main__":
