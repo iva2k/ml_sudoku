@@ -1,2 +1,16 @@
-lxml
-numpy
+# Python 3.13.2
+
+lxml==6.0.2
+
+# numpy==2.2.4
+numpy==2.3.5
+
+# RL stuff:
+
+gymnasium==1.2.2
+
+# torch==2.6.0
+torch==2.9.1
+
+# torchvision==0.21.0
+torchvision==0.24.1
