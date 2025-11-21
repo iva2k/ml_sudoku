@@ -137,17 +137,17 @@ class SudokuEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
     def _is_valid_placement(self, grid, r, c, d):
-        """Checks if digit 'd' at (r, c) is currently valid (only checks current move)."""
-        # TODO: Implement full validation logic here (row, col, 3x3 box)
-
-        # Check row and column (excluding the current cell being checked if it was already d)
-        if np.sum(grid[r, :] == d) > 1 or np.sum(grid[:, c] == d) > 1:
+        """Checks if placing digit 'd' at (r, c) is a valid move according to Sudoku rules."""
+        # Check if 'd' is already in the same row or column
+        # Note: We don't need to exclude the current cell (r, c) because we are checking
+        # before the digit is placed, or we are checking a temporary grid.
+        if d in grid[r, :] or d in grid[:, c]:
             return False
 
         # Check 3x3 subgrid
         start_r, start_c = 3 * (r // 3), 3 * (c // 3)
         box = grid[start_r:start_r + 3, start_c:start_c + 3]
-        if np.sum(box == d) > 1:
+        if d in box:
             return False
 
         return True
