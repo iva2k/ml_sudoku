@@ -26,7 +26,7 @@
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
-                "--episodes", "10",
+                "--episodes", "200",
             ],
             "console": "integratedTerminal",
             "justMyCode": true

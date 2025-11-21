@@ -25,6 +25,7 @@ from collections import deque, namedtuple
 import random
 from typing import Any, Optional
 import time
+from datetime import timedelta
 
 import gymnasium as gym
 import numpy as np
@@ -39,7 +40,7 @@ GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.01
 EPS_DECAY = 0.99995
-TARGET_UPDATE = 5  # 1000  # How often to update the target network
+TARGET_UPDATE = 50  # 1000  # How often to update the target network
 MEMORY_CAPACITY = 10000
 BATCH_SIZE = 64
 LR = 0.0001
@@ -241,7 +242,23 @@ class SudokuEnv(gym.Env):
 
     def render(self):
         """Prints the current state of the Sudoku grid."""
-        print(self.current_grid)
+        print(self.format_grid_to_string(self.current_grid))
+
+    @staticmethod
+    def format_grid_to_string(grid: np.ndarray) -> str:
+        """Formats a 9x9 grid for pretty printing, replacing 0s with spaces."""
+        s = ""
+        for i in range(9):
+            if i > 0 and i % 3 == 0:
+                s += "------+-------+------\n"
+            
+            row_str = []
+            for j in range(9):
+                digit = grid[i, j]
+                row_str.append(str(digit) if digit != 0 else " ")
+            
+            s += " ".join(row_str[0:3]) + " | " + " ".join(row_str[3:6]) + " | " + " ".join(row_str[6:9]) + "\n"
+        return s
 
     def close(self):
         pass
@@ -472,7 +489,7 @@ def main():
         # 8. Logging and Reporting
         if best_reward == -float('inf') or episode_reward > best_reward:
             if best_reward != -float('inf'):
-                print(f"New Best Reward! {episode_reward}")
+                print(f"New Best Reward: {episode_reward}")
             best_reward = episode_reward
             # TODO: Optional: Save model checkpoint here
         if i_episode % 100 == 0:
@@ -483,18 +500,19 @@ def main():
 
     end_time = time.time()
     training_duration = end_time - start_time
+    duration_str = str(timedelta(seconds=training_duration))
 
     print(
         f"\nTraining Complete. "
         f"Final Best Reward: {best_reward} over {args.episodes} episodes. "
-        f"Total time: {training_duration:.2f} seconds."
+        f"Total time: {duration_str}"
     )
 
     # --- Run a final test episode and display the solved grid ---
     print("\n--- Running Final Test Episode ---")
     state, _ = env.reset()
     print("Initial Puzzle:")
-    print(env.initial_puzzle)
+    print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
     for t in range(81):  # Max 81 steps
         # In test mode, always exploit (no exploration)
@@ -514,7 +532,7 @@ def main():
 
     print("\nDelta (Agent's moves):")
     delta_grid = env.current_grid - env.initial_puzzle
-    print(delta_grid)
+    print(SudokuEnv.format_grid_to_string(delta_grid))
 
 
 if __name__ == "__main__":
