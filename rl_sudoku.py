@@ -416,12 +416,12 @@ def main():
                 f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, " 
                 f"Total Reward: {episode_reward:.2f}, Epsilon: {max(EPS_END, EPS_START):.4f}"
             )
-            if episode_reward > best_reward:
+            if best_reward == -float('inf') or episode_reward > best_reward:
                 best_reward = episode_reward
                 print(f"New Best Reward! {best_reward}")
                 # TODO: Optional: Save model checkpoint here
 
-    print("Training Complete.")
+    print("Training Complete. Final Best Reward: {best_reward}, {args.episodes} episodes")
     # TODO: Optional: Run a final test episode and display the solved grid
 
 
