@@ -15,9 +15,11 @@ We define the Environment, the Network, and the Replay Buffer
  - main(), parse_args()
 
 ## Phase 2: Implement Core Logic / Functioning Environment
+ - Reward Shaping logic
+ - Action Masking logic
 
-## Phase 3: ...
-
+## Phase 3: Generalization and Training
+ - Procedural content generation for the environment
 """
 
 import argparse
@@ -39,7 +41,7 @@ GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.01
 EPS_DECAY = 0.99995
-TARGET_UPDATE = 50  # 1000  # How often to update the target network
+TARGET_UPDATE = 50  # Frequency (in episodes) to update the target network
 MEMORY_CAPACITY = 10000
 BATCH_SIZE = 64
 LR = 0.0001
@@ -48,6 +50,141 @@ WEIGHT_DECAY = 0.01
 
 # Large Negative reward to suppress known illegal actions
 ILLEGAL_ACTION_VALUE = -1e10
+
+
+def _generate_initial_grid1() -> np.ndarray:
+    """Generates a complete, solved Sudoku grid using a randomized backtracking algorithm."""
+    grid = np.zeros((9, 9), dtype=np.int32)
+    nums = list(range(1, 10))
+
+    def find_empty(g):
+        for r in range(9):
+            for c in range(9):
+                if g[r, c] == 0:
+                    return (r, c)
+        return None
+
+    def is_valid(g, num, pos):
+        r, c = pos
+        # Check row
+        if num in g[r, :]:
+            return False
+        # Check column
+        if num in g[:, c]:
+            return False
+        # Check 3x3 box
+        box_r, box_c = 3 * (r // 3), 3 * (c // 3)
+        if num in g[box_r:box_r + 3, box_c:box_c + 3]:
+            return False
+        return True
+
+    def solve(g):
+        find = find_empty(g)
+        if not find:
+            return True  # Solved
+        else:
+            row, col = find
+
+        random.shuffle(nums)  # Randomize numbers to try
+        for num in nums:
+            if is_valid(g, num, (row, col)):
+                g[row, col] = num
+                if solve(g):
+                    return True
+                g[row, col] = 0  # Backtrack
+        return False
+
+    solve(grid)
+    return grid.astype(np.int32)
+
+
+def _generate_initial_grid() -> np.ndarray:
+    """Generates a complete, solved Sudoku grid using constraint-preserving transformations."""
+    def _shuffle_digits(grid: np.ndarray) -> np.ndarray:
+        """Permutes the digits (1-9) across the entire grid."""
+        mapping = list(range(1, 10))
+        random.shuffle(mapping)  # e.g., [5, 8, 1, 4, 3, 7, 2, 9, 6]
+        shuffled_grid = np.zeros_like(grid)
+        for old_val in range(1, 10):
+            new_val = mapping[old_val - 1]
+            shuffled_grid[grid == old_val] = new_val
+        return shuffled_grid
+
+    def _swap_major_rows(grid: np.ndarray) -> np.ndarray:
+        """Permutes the 3 major row blocks (rows 0-2, 3-5, 6-8)."""
+        row_blocks = np.split(
+            grid, 3, axis=0)  # Split into 3 arrays of shape (3, 9)
+        random.shuffle(row_blocks)
+        return np.concatenate(row_blocks, axis=0)
+
+    def _swap_major_cols(grid: np.ndarray) -> np.ndarray:
+        """Permutes the 3 major column blocks (cols 0-2, 3-5, 6-8)."""
+        col_blocks = np.split(
+            grid, 3, axis=1)  # Split into 3 arrays of shape (9, 3)
+        random.shuffle(col_blocks)
+        return np.concatenate(col_blocks, axis=1)
+
+    def _shuffle_minor_rows(grid: np.ndarray) -> np.ndarray:
+        """Shuffles rows within each of the three 3x3 row blocks."""
+        new_grid = grid.copy()
+        for i in range(3):
+            # Indices for the current row block (e.g., 0, 1, 2)
+            indices = list(range(i * 3, (i + 1) * 3))
+            random.shuffle(indices)
+            new_grid[i * 3: (i + 1) * 3, :] = grid[indices, :]
+        return new_grid
+
+    def _shuffle_minor_cols(grid: np.ndarray) -> np.ndarray:
+        """Shuffles columns within each of the three 3x3 column blocks."""
+        new_grid = grid.copy()
+        for i in range(3):
+            # Indices for the current column block (e.g., 0, 1, 2)
+            indices = list(range(i * 3, (i + 1) * 3))
+            random.shuffle(indices)
+            new_grid[:, i * 3: (i + 1) * 3] = grid[:, indices]
+        return new_grid
+
+    base = 3
+    side = base * base
+
+    # 1. Create Base Grid (Canonical Pattern)
+    # This formula is guaranteed to produce a solved grid
+    def pattern(r, c):
+        return (base * (r % base) + r // base + c) % side
+    nums = np.array(list(range(1, side + 1)))  # [1, 2, ..., 9]
+
+    # Initial canonical solved grid
+    grid = np.array([[nums[pattern(r, c)] for c in range(side)]
+                    for r in range(side)], dtype=np.int32)
+
+    # 2. Apply Permutations (for variety)
+    # This order is safe and preserves all Sudoku rules:
+    grid = _shuffle_digits(grid)
+    grid = _swap_major_rows(grid)
+    grid = _swap_major_cols(grid)
+    grid = _shuffle_minor_rows(grid)
+    grid = _shuffle_minor_cols(grid)
+
+    return grid
+
+
+def _clue_grid(solved_grid: np.ndarray, num_clues: int = 30) -> np.ndarray:
+    """Removes numbers from a solved grid to create a puzzle."""
+    clue_grid = solved_grid.copy()
+    # Create a list of all 81 indices (r, c)
+    all_indices = [(r, c) for r in range(9) for c in range(9)]
+
+    # Shuffle the indices and remove all but the first 'num_clues'
+    random.shuffle(all_indices)
+
+    # Determine how many cells to keep (the clues)
+    cells_to_keep = set(all_indices[:num_clues])
+
+    for r in range(9):
+        for c in range(9):
+            if (r, c) not in cells_to_keep:
+                clue_grid[r, c] = 0
+    return clue_grid
 
 
 def action_encode(row, col, digit):
@@ -91,7 +228,12 @@ class SudokuEnv(gym.Env):
     Action: (row, col, digit) to place. Total 729 actions.
     """
 
-    def __init__(self, puzzle_str: Optional[str] = None, reward_shaping: bool = False):
+    def __init__(
+        self,
+        puzzle_str: Optional[str] = None,
+        reward_shaping: bool = False,
+        fixed_puzzle: bool = False
+    ):
         super().__init__()
 
         # 9 rows, 9 columns, digits 1-9.
@@ -101,15 +243,20 @@ class SudokuEnv(gym.Env):
         self.observation_space = gym.spaces.Box(
             low=0, high=9, shape=(9, 9), dtype=np.int32)
 
-        # Reward Shaping toggle
+        # RL options
         self.reward_shaping = reward_shaping
+        self.fixed_puzzle = fixed_puzzle
 
         # Initial puzzle (0 for empty cells)
-        self.initial_puzzle = self._parse_puzzle(puzzle_str)
-        self.current_grid = self.initial_puzzle.copy()
+        self.default_puzzle = self._parse_puzzle(puzzle_str)
+        self.initial_puzzle = self.default_puzzle.copy()
+        self.current_grid = self.default_puzzle.copy()
         self.violation_count = 0
         print(
-            f"Sudoku Environment Initialized. Reward Shaping: {self.reward_shaping}")
+            f"Sudoku Environment Initialized. "
+            f"Shaping: {self.reward_shaping}, "
+            f"Generation: {not self.fixed_puzzle}"
+        )
 
     def _parse_puzzle(self, puzzle_str: Optional[str]):
         """Converts an 81-char string (0s for empty) into a 9x9 numpy array."""
@@ -126,16 +273,28 @@ class SudokuEnv(gym.Env):
         return grid
 
     def reset(self,
-              # ? *,
               seed: int | None = None,
               options: dict[str, Any] | None = None,
               ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Resets the environment to the initial puzzle state."""
+        """Resets the environment to a new (or default) puzzle state."""
         super().reset(seed=seed, options=options)
+
+        if self.fixed_puzzle:
+            # Use the default puzzle
+            self.initial_puzzle = self.default_puzzle.copy()
+        else:
+            # Generate a new, random, solvable puzzle
+            solved = _generate_initial_grid()
+            # Keep between 25 and 35 clues for a mix of difficulties
+            clues_count = random.randint(25, 35)
+            self.initial_puzzle = _clue_grid(solved, num_clues=clues_count)
+
         self.current_grid = self.initial_puzzle.copy()
+
         if self.reward_shaping:
             # Initialize violation count for the start of the episode
             self.violation_count = self._get_violation_count(self.current_grid)
+
         observation = self.current_grid.astype(np.float32)
         info = {}
         return observation, info
@@ -151,14 +310,15 @@ class SudokuEnv(gym.Env):
         terminated = False
         truncated = False
 
-        # 1. Check if the cell is already filled (initial puzzle cells are fixed)
+        # 1. Check if the cell is already filled (illegal move)
         # if self.initial_puzzle[row, col] != 0:
         #     reward = -10.0  # Penalty for overwriting a fixed cell
         # el
         if self.current_grid[row, col] != 0:
-            reward = -10.0  # Penalty for overwriting any filled cell
+            # Penalty for wasting a step, but action masking should prevent this exploitation
+            reward = -10.0
         else:
-            # 3. Check for Sudoku Rule Violations (Simplified placeholder)
+            # 2. Check for Sudoku Rule Violations (Simplified placeholder)
             if self._is_valid_placement(self.current_grid, row, col, digit):
                 self.current_grid[row, col] = digit
 
@@ -177,7 +337,7 @@ class SudokuEnv(gym.Env):
                     # Simple Reward
                     reward = 1.0
 
-                # 4. Check if Solved
+                # 3. Check if Solved
                 if np.all(self.current_grid != 0) and self._is_fully_solved(self.current_grid):
                     reward += 100.0  # Large reward for solving
                     terminated = True
@@ -218,13 +378,15 @@ class SudokuEnv(gym.Env):
         return violations
 
     def _is_valid_placement(self, grid, r, c, d):
-        """Checks if placing digit 'd' at (r, c) is a valid move according to Sudoku rules."""
+        """
+        Checks if placing digit 'd' at (r, c) is a valid move according to Sudoku rules.
+        A temporary grid check is not needed here as we rely on the `step` function 
+        to handle placing the digit only after this check passes.
+        """
         # print(f"Checking placement at {r}, {c} with digit {d}")
         # print(f"Placement {r}, {c}: {'  ' * (c + 9 * r)}{d}")
 
         # Check if 'd' is already in the same row or column
-        # Note: We don't need to exclude the current cell (r, c) because we are checking
-        # before the digit is placed, or we are checking a temporary grid.
         if d in grid[r, :] or d in grid[:, c]:
             return False
 
@@ -238,13 +400,11 @@ class SudokuEnv(gym.Env):
         return True
 
     def _check_group(self, group):
+        """Helper to check if a 9-element group (row, col, or box) is solved."""
         if len(group) != 9:
             return False
-        if len(np.unique(group)) != 9:
-            return False
-        # if not np.all(group > 0):
-        #     return False
-        return True
+        # Check for 9 unique non-zero digits
+        return len(np.unique(group)) == 9 and np.all(group > 0)
 
     def _is_fully_solved(self, grid):
         """Checks if the grid is full and all rows, columns, and 3x3 boxes are valid."""
@@ -262,7 +422,8 @@ class SudokuEnv(gym.Env):
         # 3. Check all 3x3 boxes
         for i in range(3):
             for j in range(3):
-                box = grid[i*3:(i+1)*3, j*3:(j+1)*3]
+                # Flatten the 3x3 box into a 9-element group
+                box = grid[i*3:(i+1)*3, j*3:(j+1)*3].flatten()
                 if not self._check_group(box):
                     return False
 
@@ -321,7 +482,6 @@ class DQNSolver(nn.Module):
 
     def __init__(self, input_shape, output_size, device=None):
         super().__init__()
-        # Input shape will be (batch_size, 1, 9, 9) if we use unsqueezed input
         self.device = device
 
         # Use CNN to capture local structure (rows, columns, 3x3 boxes)
@@ -395,7 +555,6 @@ def get_action(
                 action = 0
             else:
                 action = random.choice(legal_actions)
-                # action = action_encode(0, 0, 4)
         else:
             action = action_space.sample()
     else:
@@ -410,8 +569,12 @@ def get_action(
                 # Apply mask: set Q-values of illegal actions to a very small number
                 # Create a mask with 0 for legal actions and a large negative value for illegal ones
                 mask_tensor = torch.from_numpy(mask).to(policy_net.device)
-                additive_mask = torch.where(mask_tensor, torch.tensor(0.0, device=policy_net.device), torch.tensor(
-                    ILLEGAL_ACTION_VALUE, device=policy_net.device)).unsqueeze(0)
+                additive_mask = torch.where(mask_tensor,
+                                            torch.tensor(
+                                                0.0, device=policy_net.device),
+                                            torch.tensor(ILLEGAL_ACTION_VALUE,
+                                                         device=policy_net.device)
+                                            ).unsqueeze(0)
                 masked_q_values = q_values + additive_mask
                 action = masked_q_values.argmax().item()
             else:
@@ -421,7 +584,15 @@ def get_action(
     return action, new_epsilon
 
 
-def optimize_model(policy_net, target_net, optimizer, memory, batch_size, gamma, use_masking: bool = False):
+def optimize_model(
+    policy_net,
+    target_net,
+    optimizer,
+    memory,
+    batch_size,
+    gamma,
+    use_masking: bool = False
+):
     """
     Performs one step of optimization on the Policy Network.
 
@@ -506,6 +677,8 @@ def parse_args():
                         help='Enable reward shaping (progress-based rewards).')
     parser.add_argument('--masking', action='store_true',
                         help='Enable action masking (only choose empty cells).')
+    parser.add_argument('--fixed_puzzle', action='store_true',
+                        help='Use only given puzzle for training.')
 
     # Hyperparameter arguments
     parser.add_argument('--lr', type=float, default=LR,
@@ -517,7 +690,7 @@ def parse_args():
     parser.add_argument('--memory_capacity', type=int,
                         default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
     parser.add_argument('--target_update', type=int, default=TARGET_UPDATE,
-                        help='Frequency (in steps) to update the target network.')
+                        help='Frequency (in episodes) to update the target network.')
     parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
                         help='Weight decay for the AdamW optimizer.')
     # Epsilon-greedy arguments
@@ -528,6 +701,8 @@ def parse_args():
     parser.add_argument('--eps_decay', type=float,
                         default=EPS_DECAY, help='Decay rate for epsilon.')
 
+    parser.add_argument('--log_episodes', type=int,
+                        default=20, help='Log info once every N episodes.')
     args = parser.parse_args()
 
     # Add device to args
@@ -539,13 +714,15 @@ def parse_args():
 
 def main():
     """
-    # --- PHASE 1: MAIN FUNCTION AND ARGUMENT PARSING (CARCASS) ---
+    Main training loop.
     """
 
     args, _parser = parse_args()
 
     # 1. Initialize Environment, Networks, and Optimizer
-    env = SudokuEnv(puzzle_str=args.puzzle, reward_shaping=args.reward_shaping)
+    env = SudokuEnv(puzzle_str=args.puzzle,
+                    reward_shaping=args.reward_shaping,
+                    fixed_puzzle=args.fixed_puzzle)
 
     input_shape = env.observation_space.shape
     output_size = env.action_space.n  # 729
@@ -565,6 +742,7 @@ def main():
     steps_done = 0
     current_epsilon = args.eps_start
     best_reward = -float('inf')
+    solved_count = 0
 
     print(f"Starting Training for {args.episodes} episodes...")
     start_time = time.time()
@@ -574,11 +752,19 @@ def main():
         state, _ = env.reset()
 
         episode_reward = 0
+        episode_solved = False
 
         # 3. Run the episode
         for _t in range(81):  # Max 81 steps (cells) per episode
             action, current_epsilon = get_action(
-                state, policy_net, env.action_space, current_epsilon, args.eps_end, args.eps_decay, args.masking)
+                state,
+                policy_net,
+                env.action_space,
+                current_epsilon,
+                args.eps_end,
+                args.eps_decay,
+                args.masking
+            )
 
             # 4. Take action in environment
             observation, reward, terminated, truncated, _info = env.step(
@@ -602,7 +788,12 @@ def main():
                            memory, args.batch_size, args.gamma, args.masking)
             steps_done += 1
 
-            if done:
+            if terminated:
+                episode_solved = True
+                solved_count += 1
+                break
+            if truncated:
+                # Typically not used in Sudoku, but good practice
                 break
 
         # 7. Update the target network periodically
@@ -612,14 +803,20 @@ def main():
         # 8. Logging and Reporting
         if best_reward == -float('inf') or episode_reward > best_reward:
             # if best_reward != -float('inf'):
-            print(f"New Best Reward: {episode_reward}")
+            print(
+                f"Episode {i_episode}: New Best Reward: {episode_reward:.2f}")
             best_reward = episode_reward
             # TODO: (when needed)) Save model checkpoint here
 
-        if i_episode % 100 == 0:
+        if episode_solved or i_episode % args.log_episodes == 0:
+            if not env.fixed_puzzle:
+                print(f"Episode {i_episode}: New puzzle:")
+                print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
             print(
-                f"Episode: {i_episode}/{args.episodes}, Steps: {steps_done}, "
-                f"Total Reward: {episode_reward:.2f}, Epsilon: {max(args.eps_end, current_epsilon):.4f}"
+                f"Episode: {i_episode}/{args.episodes} (Solved: {solved_count}), "
+                f"Steps: {steps_done}, "
+                f"Total Reward: {episode_reward:.2f}, "
+                f"Epsilon: {max(args.eps_end, current_epsilon):.4f}"
             )
 
     end_time = time.time()
@@ -628,7 +825,8 @@ def main():
 
     print(
         f"\nTraining Complete. "
-        f"Final Best Reward: {best_reward} over {args.episodes} episodes. "
+        f"Final Best Reward: {best_reward:.2f} over {args.episodes} episodes. "
+        f"Total Solved: {solved_count}. "
         f"Total time: {duration_str}"
     )
 
@@ -648,8 +846,12 @@ def main():
             if args.masking:
                 mask = generate_legal_mask(state)
                 mask_tensor = torch.from_numpy(mask).to(args.device)
-                additive_mask = torch.where(mask_tensor, torch.tensor(0.0, device=args.device), torch.tensor(
-                    ILLEGAL_ACTION_VALUE, device=args.device)).unsqueeze(0)
+                additive_mask = torch.where(mask_tensor,
+                                            torch.tensor(
+                                                0.0, device=args.device),
+                                            torch.tensor(
+                                                ILLEGAL_ACTION_VALUE, device=args.device)
+                                            ).unsqueeze(0)
                 masked_q_values = q_values + additive_mask
                 action = masked_q_values.argmax().item()
             else:

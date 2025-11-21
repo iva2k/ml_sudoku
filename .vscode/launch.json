@@ -29,24 +29,51 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku",
+            "name": "Python: RL sudoku 200 --fixed_puzzle --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
                 "--episodes", "200",
+                "--fixed_puzzle",
+                "--reward_shaping",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku --masking",
+            "name": "Python: RL sudoku 200 --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--episodes", "200",
+                "--reward_shaping",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku 200 --masking",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
                 "--episodes", "200",
                 "--masking",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku 50 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--episodes", "50",
+                "--masking",
+                "--reward_shaping",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
