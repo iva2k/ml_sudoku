@@ -13,6 +13,14 @@
             "justMyCode": true
         },
         {
+            "name": "Python: GET sudoku",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "getsudoku.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "Python: sudoku",
             "type": "debugpy",
             "request": "launch",
@@ -27,6 +35,18 @@
             "program": "rl_sudoku.py",
             "args": [
                 "--episodes", "200",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku --masking",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--episodes", "200",
+                "--masking",
             ],
             "console": "integratedTerminal",
             "justMyCode": true

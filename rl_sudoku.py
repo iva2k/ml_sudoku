@@ -46,6 +46,33 @@ LR = 0.0001
 MAX_EPISODES = 50000
 WEIGHT_DECAY = 0.01
 
+ILLEGAL_ACTION_VALUE = -1e10  # Large Negative reward to suppress known illegal actions
+
+def action_encode(row, col, digit):
+    """Encode action from row, col, digit."""
+    return row * 81 + col * 9 + (digit - 1)
+
+def action_decode(action):
+    """Decode action to row, col, digit."""
+    row = (action // 81) % 9
+    col = (action // 9) % 9
+    digit = (action % 9) + 1  # Digits are 1-9
+    return row, col, digit
+
+def generate_legal_mask(grid):
+    """
+    Generates a boolean mask of size 729 marking legal actions. True indicates a legal action: 
+    placing any digit (1-9) in an empty cell (value 0).
+    """
+    mask = np.zeros(9 * 9 * 9, dtype=bool)
+    for r in range(9):
+        for c in range(9):
+            # An action is only legal if the target cell is currently empty
+            if grid[r, c] == 0:
+                for d in range(1, 10):
+                    action_idx = action_encode(r, c, d)
+                    mask[action_idx] = True
+    return mask
 
 # State/action transition data structure for the Replay Buffer
 Transition = namedtuple(
@@ -84,6 +111,7 @@ class SudokuEnv(gym.Env):
         if puzzle_str is None:
             # Default easy puzzle for starting development
             puzzle_str = "000260701680070090190004500820100040004602900050003028009300074040050036703018000"
+            # sol_str    = "435269781682571493197834562826195347374682915951743628519326874248957136763418259"
 
         # Ensure the string is 81 characters long and contains only digits
         if len(puzzle_str) != 81 or not puzzle_str.isdigit():
@@ -112,9 +140,7 @@ class SudokuEnv(gym.Env):
         Applies the action (0-728) to the grid and returns next_state, reward, done, info.
         """
         # Map the single integer action back to (row, col, digit)
-        row = (action // 81) % 9
-        col = (action // 9) % 9
-        digit = (action % 9) + 1  # Digits are 1-9
+        row, col, digit = action_decode(action)
 
         reward = 0.0
         terminated = False
@@ -127,12 +153,8 @@ class SudokuEnv(gym.Env):
         if self.current_grid[row, col] != 0:
             reward = -10.0  # Penalty for overwriting any filled cell
         else:
-            # 2. Tentatively place the digit
-            temp_grid = self.current_grid.copy()
-            temp_grid[row, col] = digit
-
             # 3. Check for Sudoku Rule Violations (Simplified placeholder)
-            if self._is_valid_placement(temp_grid, row, col, digit):
+            if self._is_valid_placement(self.current_grid, row, col, digit):
                 self.current_grid[row, col] = digit
 
                 # --- REWARD CALCULATION ---
@@ -192,6 +214,9 @@ class SudokuEnv(gym.Env):
 
     def _is_valid_placement(self, grid, r, c, d):
         """Checks if placing digit 'd' at (r, c) is a valid move according to Sudoku rules."""
+        # print(f"Checking placement at {r}, {c} with digit {d}")
+        # print(f"Placement {r}, {c}: {'  ' * (c + 9 * r)}{d}")
+
         # Check if 'd' is already in the same row or column
         # Note: We don't need to exclude the current cell (r, c) because we are checking
         # before the digit is placed, or we are checking a temporary grid.
@@ -204,6 +229,7 @@ class SudokuEnv(gym.Env):
         if d in box:
             return False
 
+        print(f"Placement {r}, {c}: {d} is valid")
         return True
 
     def _check_group(self, group):
@@ -248,12 +274,12 @@ class SudokuEnv(gym.Env):
         for i in range(9):
             if i > 0 and i % 3 == 0:
                 s += "------+-------+------\n"
-            
+
             row_str = []
             for j in range(9):
                 digit = grid[i, j]
                 row_str.append(str(digit) if digit != 0 else " ")
-            
+
             s += " ".join(row_str[0:3]) + " | " + " ".join(row_str[3:6]) + " | " + " ".join(row_str[6:9]) + "\n"
         return s
 
@@ -286,9 +312,10 @@ class DQNSolver(nn.Module):
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
     """
 
-    def __init__(self, input_shape, output_size):
+    def __init__(self, input_shape, output_size, device = None):
         super().__init__()
         # Input shape will be (batch_size, 1, 9, 9) if we use unsqueezed input
+        self.device = device
 
         # Use CNN to capture local structure (rows, columns, 3x3 boxes)
         self.conv = nn.Sequential(
@@ -328,7 +355,7 @@ class DQNSolver(nn.Module):
         return q_values
 
 
-def get_action(state, policy_net, action_space, epsilon, eps_end, eps_decay):
+def get_action(state, policy_net, action_space, epsilon, eps_end, eps_decay, use_masking: bool = False):
     """
     Implements the epsilon-greedy policy.
     Returns the chosen action and the new epsilon value after decay.
@@ -339,23 +366,46 @@ def get_action(state, policy_net, action_space, epsilon, eps_end, eps_decay):
     # Epsilon decay
     new_epsilon = epsilon * eps_decay
 
+    mask = None
+    if use_masking:
+        mask = generate_legal_mask(state)
+
     if random.random() < current_epsilon:
         # Explore: Choose a random action
-        action = action_space.sample()
+        if use_masking:
+            # Sample only from legal actions
+            legal_actions = np.where(mask)[0]
+            if len(legal_actions) == 0:
+                # Should not happen in a solvable puzzle, but return a safe action (first one)
+                action = 0
+            else:
+                action = random.choice(legal_actions)
+                # action = action_encode(0, 0, 4)
+        else:
+            action = action_space.sample()
     else:
         # Exploit: Choose the action with the highest predicted Q-value
         with torch.no_grad():
             # Add batch dimension and get Q-values
             state_tensor = torch.tensor(
-                state, dtype=torch.float32).unsqueeze(0)
+                state, dtype=torch.float32, device=policy_net.device).unsqueeze(0)
             q_values = policy_net(state_tensor)
-            # Use argmax to get the best action index
-            action = q_values.argmax().item()
-    
+
+            if use_masking:
+                # Apply mask: set Q-values of illegal actions to a very small number
+                # Create a mask with 0 for legal actions and a large negative value for illegal ones
+                mask_tensor = torch.from_numpy(mask).to(policy_net.device)
+                additive_mask = torch.where(mask_tensor, torch.tensor(0.0, device=policy_net.device), torch.tensor(ILLEGAL_ACTION_VALUE, device=policy_net.device)).unsqueeze(0)
+                masked_q_values = q_values + additive_mask
+                action = masked_q_values.argmax().item()
+            else:
+                # Use argmax to get the best action index
+                action = q_values.argmax().item()
+
     return action, new_epsilon
 
 
-def optimize_model(policy_net, target_net, optimizer, memory, batch_size, gamma):
+def optimize_model(policy_net, target_net, optimizer, memory, batch_size, gamma, use_masking: bool = False):
     """
     Performs one step of optimization on the Policy Network.
 
@@ -371,24 +421,40 @@ def optimize_model(policy_net, target_net, optimizer, memory, batch_size, gamma)
     # Convert batch of transitions to tensors
     non_final_mask = torch.tensor(
         tuple(map(lambda d: not d, batch.done)), dtype=torch.bool)
-    non_final_next_states = torch.stack(
-        [s for s, done in zip(batch.next_state, batch.done) if not done])
 
-    state_batch = torch.stack(batch.state)
-    action_batch = torch.tensor(batch.action).unsqueeze(1)  # [B, 1]
-    reward_batch = torch.tensor(batch.reward, dtype=torch.float32)
+    device = policy_net.device
+    state_batch = torch.stack(batch.state).to(device)
+    action_batch = torch.tensor(batch.action, device=device).unsqueeze(1)  # [B, 1]
+    reward_batch = torch.tensor(batch.reward, dtype=torch.float32, device=device)
 
     # Compute Q(s_t, a) - the Q-values for the actions taken
     state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
     next_state_values = torch.zeros(batch_size)
-    with torch.no_grad():
-        next_state_values[non_final_mask] = target_net(
-            non_final_next_states).max(1)[0].detach()
+    non_final_next_states = torch.stack(
+        [s for s, done in zip(batch.next_state, batch.done) if not done]).to(device)
+    if non_final_next_states.numel() > 0:
+        with torch.no_grad():
+            target_q_values = target_net(non_final_next_states)
+
+            if use_masking:
+                # Generate and apply mask to target Q-values
+                next_states_mask_np = np.stack([generate_legal_mask(s.numpy()) for s in non_final_next_states])
+                next_states_mask_tensor = torch.from_numpy(next_states_mask_np).to(device)
+
+                # Create a mask with 0 for legal actions and a large negative value for illegal ones
+                additive_mask = torch.where(next_states_mask_tensor, torch.tensor(0.0, device=device), torch.tensor(ILLEGAL_ACTION_VALUE, device=device))
+                masked_q_values = target_q_values + additive_mask
+
+                # Take the max over the masked Q-values
+                next_state_values[non_final_mask] = masked_q_values.max(1)[0].detach()
+            else:
+                # Use standard max Q-value
+                next_state_values[non_final_mask] = target_q_values.max(1)[0].detach()
 
     # Compute the expected Q values (target)
-    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+    expected_state_action_values = (next_state_values.to(device) * gamma) + reward_batch
 
     # Compute Huber loss (a robust form of MSE) - less sensitive to outliers
     criterion = nn.SmoothL1Loss()
@@ -414,6 +480,9 @@ def parse_args():
                         help='Initial Sudoku puzzle string (81 chars, 0 for empty).')
     parser.add_argument('--reward_shaping', action='store_true',
                         help='Enable reward shaping (progress-based rewards).')
+    parser.add_argument('--masking', action='store_true',
+                        help='Enable action masking (only choose empty cells).')
+
     # Hyperparameter arguments
     parser.add_argument('--lr', type=float, default=LR, help='Learning rate for the optimizer.')
     parser.add_argument('--gamma', type=float, default=GAMMA, help='Discount factor for future rewards.')
@@ -427,6 +496,11 @@ def parse_args():
     parser.add_argument('--eps_decay', type=float, default=EPS_DECAY, help='Decay rate for epsilon.')
 
     args = parser.parse_args()
+
+    # Add device to args
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {args.device}")
+
     return args, parser
 
 
@@ -443,8 +517,8 @@ def main():
     input_shape = env.observation_space.shape
     output_size = env.action_space.n  # 729
 
-    policy_net = DQNSolver(input_shape, output_size)
-    target_net = DQNSolver(input_shape, output_size)
+    policy_net = DQNSolver(input_shape, output_size, args.device).to(args.device)
+    target_net = DQNSolver(input_shape, output_size, args.device).to(args.device)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()  # Target network is always in evaluation mode
 
@@ -469,7 +543,7 @@ def main():
         # 3. Run the episode
         for t in range(81):  # Max 81 steps (cells) per episode
             action, current_epsilon = get_action(
-                state, policy_net, env.action_space, current_epsilon, args.eps_end, args.eps_decay)
+                state, policy_net, env.action_space, current_epsilon, args.eps_end, args.eps_decay, args.masking)
 
             # 4. Take action in environment
             observation, reward, terminated, truncated, _info = env.step(
@@ -479,8 +553,8 @@ def main():
 
             # 5. Store the transition in the replay memory
             # Convert numpy arrays to tensors for storage
-            state_tensor = torch.from_numpy(state).float()
-            next_state_tensor = torch.from_numpy(next_state).float()
+            state_tensor = torch.from_numpy(state).float() # Stored on CPU
+            next_state_tensor = torch.from_numpy(next_state).float() # Stored on CPU
             memory.push(state_tensor, action, reward, next_state_tensor, done)
 
             # Move to the next state
@@ -489,7 +563,7 @@ def main():
 
             # 6. Perform optimization step
             optimize_model(policy_net, target_net, optimizer,
-                           memory, args.batch_size, args.gamma)
+                           memory, args.batch_size, args.gamma, args.masking)
             steps_done += 1
 
             if done:
@@ -501,14 +575,14 @@ def main():
 
         # 8. Logging and Reporting
         if best_reward == -float('inf') or episode_reward > best_reward:
-            if best_reward != -float('inf'):
-                print(f"New Best Reward: {episode_reward}")
+            # if best_reward != -float('inf'):
+            print(f"New Best Reward: {episode_reward}")
             best_reward = episode_reward
             # TODO: (when needed)) Save model checkpoint here
 
         if i_episode % 100 == 0:
             print(
-                f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, "
+                f"Episode: {i_episode}/{args.episodes}, Steps: {steps_done}, "
                 f"Total Reward: {episode_reward:.2f}, Epsilon: {max(args.eps_end, current_epsilon):.4f}"
             )
 
@@ -532,9 +606,17 @@ def main():
         # In test mode, always exploit (no exploration)
         with torch.no_grad():
             state_tensor = torch.tensor(
-                state, dtype=torch.float32).unsqueeze(0)
-            q_values = policy_net(state_tensor)
-            action = q_values.argmax().item()
+                state, dtype=torch.float32, device=args.device).unsqueeze(0)
+            q_values = policy_net(state_tensor) # [1, 729]
+
+            if args.masking:
+                mask = generate_legal_mask(state)
+                mask_tensor = torch.from_numpy(mask).to(args.device)
+                additive_mask = torch.where(mask_tensor, torch.tensor(0.0, device=args.device), torch.tensor(ILLEGAL_ACTION_VALUE, device=args.device)).unsqueeze(0)
+                masked_q_values = q_values + additive_mask
+                action = masked_q_values.argmax().item()
+            else:
+                action = q_values.argmax().item()
 
         observation, _, terminated, truncated, _ = env.step(action)
         state = observation
