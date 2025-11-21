@@ -33,9 +33,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# Hyperparameters
-# TODO: (Placeholders - adjust these during Phase 3)
-# TODO: (when needed) Move values to default_args and usage to args, so can change hyperparams from command line.
+# TODO: (when needed) Adjust these during Phase 3
+# Default Hyperparameters & Epsilon-greedy params (all can be changed from command line):
 GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.01
@@ -111,8 +110,6 @@ class SudokuEnv(gym.Env):
     def step(self, action):
         """
         Applies the action (0-728) to the grid and returns next_state, reward, done, info.
-
-        # --- PHASE 2: CORE LOGIC IMPLEMENTATION (TODO) ---
         """
         # Map the single integer action back to (row, col, digit)
         row = (action // 81) % 9
@@ -331,22 +328,20 @@ class DQNSolver(nn.Module):
         return q_values
 
 
-def get_action(state, policy_net, action_space):
+def get_action(state, policy_net, action_space, epsilon, eps_end, eps_decay):
     """
     Implements the epsilon-greedy policy.
-
-    # --- PHASE 3: EPSILON-GREEDY (TODO) ---
+    Returns the chosen action and the new epsilon value after decay.
     """
-    global EPS_START  # 0.24.1, EPS_END, EPS_DECAY
     # Use max to ensure we don't go below EPS_END
-    epsilon = max(EPS_END, EPS_START)
+    current_epsilon = max(eps_end, epsilon)
 
     # Epsilon decay
-    EPS_START *= EPS_DECAY
+    new_epsilon = epsilon * eps_decay
 
-    if random.random() < epsilon:
+    if random.random() < current_epsilon:
         # Explore: Choose a random action
-        return action_space.sample()
+        action = action_space.sample()
     else:
         # Exploit: Choose the action with the highest predicted Q-value
         with torch.no_grad():
@@ -355,16 +350,18 @@ def get_action(state, policy_net, action_space):
                 state, dtype=torch.float32).unsqueeze(0)
             q_values = policy_net(state_tensor)
             # Use argmax to get the best action index
-            return q_values.argmax().item()
+            action = q_values.argmax().item()
+    
+    return action, new_epsilon
 
 
-def optimize_model(policy_net, target_net, optimizer, memory):
+def optimize_model(policy_net, target_net, optimizer, memory, batch_size, gamma):
     """
     Performs one step of optimization on the Policy Network.
 
     BELLMAN LOSS AND BACKPROP
     """
-    transitions = memory.sample(BATCH_SIZE)
+    transitions = memory.sample(batch_size)
     if not transitions:
         return
 
@@ -385,7 +382,7 @@ def optimize_model(policy_net, target_net, optimizer, memory):
     state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
-    next_state_values = torch.zeros(BATCH_SIZE)
+    next_state_values = torch.zeros(batch_size)
     with torch.no_grad():
         next_state_values[non_final_mask] = target_net(
             non_final_next_states).max(1)[0].detach()
@@ -393,7 +390,7 @@ def optimize_model(policy_net, target_net, optimizer, memory):
     # Compute the expected Q values (target)
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
-    # Compute Huber loss (a robust form of MSE)
+    # Compute Huber loss (a robust form of MSE) - less sensitive to outliers
     criterion = nn.SmoothL1Loss()
     loss = criterion(state_action_values,
                      expected_state_action_values.unsqueeze(1))
@@ -410,12 +407,25 @@ def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Deep Q-Learning Sudoku Solver")
+    # Training arguments
     parser.add_argument('--episodes', type=int,
                         default=MAX_EPISODES, help='Number of episodes to train.')
     parser.add_argument('--puzzle', type=str, default=None,
                         help='Initial Sudoku puzzle string (81 chars, 0 for empty).')
     parser.add_argument('--reward_shaping', action='store_true',
                         help='Enable reward shaping (progress-based rewards).')
+    # Hyperparameter arguments
+    parser.add_argument('--lr', type=float, default=LR, help='Learning rate for the optimizer.')
+    parser.add_argument('--gamma', type=float, default=GAMMA, help='Discount factor for future rewards.')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help='Batch size for training.')
+    parser.add_argument('--memory_capacity', type=int, default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
+    parser.add_argument('--target_update', type=int, default=TARGET_UPDATE, help='Frequency (in steps) to update the target network.')
+    parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY, help='Weight decay for the AdamW optimizer.')
+    # Epsilon-greedy arguments
+    parser.add_argument('--eps_start', type=float, default=EPS_START, help='Starting value of epsilon for exploration.')
+    parser.add_argument('--eps_end', type=float, default=EPS_END, help='Minimum value of epsilon.')
+    parser.add_argument('--eps_decay', type=float, default=EPS_DECAY, help='Decay rate for epsilon.')
+
     args = parser.parse_args()
     return args, parser
 
@@ -439,11 +449,12 @@ def main():
     target_net.eval()  # Target network is always in evaluation mode
 
     optimizer = optim.AdamW(policy_net.parameters(),
-                            lr=LR, amsgrad=True, weight_decay=WEIGHT_DECAY)
-    memory = ReplayBuffer(MEMORY_CAPACITY)
+                            lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
+    memory = ReplayBuffer(args.memory_capacity)
 
     # Training loop
     steps_done = 0
+    current_epsilon = args.eps_start
     best_reward = -float('inf')
 
     print(f"Starting Training for {args.episodes} episodes...")
@@ -457,7 +468,8 @@ def main():
 
         # 3. Run the episode
         for t in range(81):  # Max 81 steps (cells) per episode
-            action = get_action(state, policy_net, env.action_space)
+            action, current_epsilon = get_action(
+                state, policy_net, env.action_space, current_epsilon, args.eps_end, args.eps_decay)
 
             # 4. Take action in environment
             observation, reward, terminated, truncated, _info = env.step(
@@ -476,14 +488,15 @@ def main():
             episode_reward += reward
 
             # 6. Perform optimization step
-            optimize_model(policy_net, target_net, optimizer, memory)
+            optimize_model(policy_net, target_net, optimizer,
+                           memory, args.batch_size, args.gamma)
             steps_done += 1
 
             if done:
                 break
 
         # 7. Update the target network periodically
-        if steps_done % TARGET_UPDATE == 0:
+        if i_episode % args.target_update == 0:
             target_net.load_state_dict(policy_net.state_dict())
 
         # 8. Logging and Reporting
@@ -491,11 +504,12 @@ def main():
             if best_reward != -float('inf'):
                 print(f"New Best Reward: {episode_reward}")
             best_reward = episode_reward
-            # TODO: Optional: Save model checkpoint here
+            # TODO: (when needed)) Save model checkpoint here
+
         if i_episode % 100 == 0:
             print(
                 f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, "
-                f"Total Reward: {episode_reward:.2f}, Epsilon: {max(EPS_END, EPS_START):.4f}"
+                f"Total Reward: {episode_reward:.2f}, Epsilon: {max(args.eps_end, current_epsilon):.4f}"
             )
 
     end_time = time.time()
