@@ -512,6 +512,10 @@ def main():
     print("\nFinal Grid:")
     env.render()
 
+    print("\nDelta (Agent's moves):")
+    delta_grid = env.current_grid - env.initial_puzzle
+    print(delta_grid)
+
 
 if __name__ == "__main__":
     main()
