@@ -24,6 +24,7 @@ import argparse
 from collections import deque, namedtuple
 import random
 from typing import Any, Optional
+import time
 
 import gymnasium as gym
 import numpy as np
@@ -429,6 +430,7 @@ def main():
     best_reward = -float('inf')
 
     print(f"Starting Training for {args.episodes} episodes...")
+    start_time = time.time()
 
     for i_episode in range(1, args.episodes + 1):
         # 2. Reset the environment and get initial state
@@ -478,11 +480,15 @@ def main():
                 print(f"New Best Reward! {best_reward}")
                 # TODO: Optional: Save model checkpoint here
 
+    end_time = time.time()
+    training_duration = end_time - start_time
+
     print(
-        f"Training Complete. " 
-        f"Final Best Reward: {best_reward}, {args.episodes} episodes"
+        f"\nTraining Complete. "
+        f"Final Best Reward: {best_reward} over {args.episodes} episodes. "
+        f"Total time: {training_duration:.2f} seconds."
     )
-    # TODO: Optional: Run a final test episode and display the solved grid
+    # TODO: (now) Run a final test episode and display the solved grid
 
 
 if __name__ == "__main__":
