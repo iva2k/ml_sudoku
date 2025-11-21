@@ -36,7 +36,7 @@ GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.01
 EPS_DECAY = 0.99995
-TARGET_UPDATE = 1000  # How often to update the target network
+TARGET_UPDATE = 50 # 1000  # How often to update the target network
 MEMORY_CAPACITY = 10000
 BATCH_SIZE = 64
 LR = 0.0001
@@ -413,7 +413,7 @@ def main():
                 # TODO: Optional: Save model checkpoint here
 
     print("Training Complete.")
-    # Optional: Run a final test episode and display the solved grid
+    # TODO: Optional: Run a final test episode and display the solved grid
 
 
 if __name__ == "__main__":
