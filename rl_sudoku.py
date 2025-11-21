@@ -152,22 +152,33 @@ class SudokuEnv(gym.Env):
 
         return True
 
+    def _check_group(self, group):
+        if len(group) != 9:
+            return False
+        if len(np.unique(group)) != 9:
+            return False
+        # if not np.all(group > 0):
+        #     return False
+        return True
+
     def _is_fully_solved(self, grid):
         """Checks if the grid is full and all rows, columns, and 3x3 boxes are valid."""
-        # TODO: Implement full solved check logic here
+        # 1. Check if there are any empty cells (0s) left.
+        if np.any(grid == 0):
+            return False
 
-        # Check all rows and columns
+        # 2. Check all rows and columns for uniqueness (must contain 1-9)
         for i in range(9):
-            if not (len(np.unique(grid[i, :])) == 9 and np.all(grid[i, :] > 0)):
-                return False  # Row check
-            if not (len(np.unique(grid[:, i])) == 9 and np.all(grid[:, i] > 0)):
-                return False  # Column check
+            if not self._check_group(grid[i, :]):  # Row check
+                return False
+            if not self._check_group(grid[:, i]):  # Column check
+                return False
 
-        # Check all 3x3 boxes
+        # 3. Check all 3x3 boxes
         for i in range(3):
             for j in range(3):
                 box = grid[i*3:(i+1)*3, j*3:(j+1)*3]
-                if not (len(np.unique(box)) == 9 and np.all(box > 0)):
+                if not self._check_group(box):
                     return False
 
         return True
@@ -178,9 +189,6 @@ class SudokuEnv(gym.Env):
 
     def close(self):
         pass
-
-# --- PHASE 1: REPLAY BUFFER (CARCASS) ---
-
 
 class ReplayBuffer:
     """Stores experience tuples to stabilize training."""
@@ -317,8 +325,7 @@ def optimize_model(policy_net, target_net, optimizer, memory):
 
     # Compute Huber loss (a robust form of MSE)
     criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values,
-                     expected_state_action_values.unsqueeze(1))
+    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
 
     # Optimize the model
     optimizer.zero_grad()
@@ -406,7 +413,9 @@ def main():
         # 8. Logging and Reporting
         if i_episode % 100 == 0:
             print(
-                f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, Total Reward: {episode_reward:.2f}, Epsilon: {max(EPS_END, EPS_START):.4f}")
+                f"Episode: {i_episode}/{args.episodes}, Steps: {t+1}, " 
+                f"Total Reward: {episode_reward:.2f}, Epsilon: {max(EPS_END, EPS_START):.4f}"
+            )
             if episode_reward > best_reward:
                 best_reward = episode_reward
                 print(f"New Best Reward! {best_reward}")
