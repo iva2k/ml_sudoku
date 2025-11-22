@@ -24,6 +24,8 @@ We define the Environment, the Network, and the Replay Buffer
 
 import argparse
 from collections import deque, namedtuple
+import ctypes
+import platform
 import random
 from typing import Any, Optional
 import time
@@ -281,8 +283,9 @@ class SudokuEnv(gym.Env):
         return grid, sol_grid
 
     def reset(self,
+              *,
               seed: int | None = None,
-              options: dict[str, Any] | None = None,
+              options: dict[str, Any] | None = None
               ) -> tuple[np.ndarray, dict[str, Any]]:
         """Resets the environment to a new (or default) puzzle state."""
         super().reset(seed=seed, options=options)
@@ -337,14 +340,16 @@ class SudokuEnv(gym.Env):
 
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
-                if np.all(self.current_grid != 0) and np.array_equal(self.current_grid, self.solution_grid):
+                if (np.all(self.current_grid != 0)
+                    and np.array_equal(self.current_grid, self.solution_grid)):
                     reward += 100.0  # Large reward for solving
                     terminated = True
             else:
-                # TODO: We still place the digit to let the agent see the consequences of its mistake.
-                # Incorrect move: place the digit but give a penalty.
-                # The problem with placing wrong digit is in the dead-end path.
-                # The agent is penalized for overwriting placed digits, so there is no way out of the dead-end state.
+                # TODO: (when needed) Place the digit to let the agent see the consequences of its mistake.
+                ## Incorrect move: place the digit but give a penalty.
+                ## The problem with placing wrong digit is in the dead-end path:
+                ## There is no way out of the dead-end state as
+                ## the agent is penalized for overwriting placed digits.
                 # self.current_grid[row, col] = digit
 
                 reward = -5.0  # Penalty for an invalid move (violates rules)
@@ -457,7 +462,6 @@ class SudokuEnv(gym.Env):
 
     def close(self):
         """Clean up resources."""
-        pass
 
 
 class ReplayBuffer:
@@ -485,7 +489,7 @@ class DQNSolver(nn.Module):
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
     """
 
-    def __init__(self, input_shape, output_size, device=None):
+    def __init__(self, _input_shape, output_size, device=None):
         super().__init__()
         self.device = device
 
@@ -554,7 +558,7 @@ def get_action(
         # Explore: Choose a random action
         if use_masking:
             # Sample only from legal actions
-            legal_actions = np.where(mask)[0]
+            legal_actions = np.nonzero(mask)[0]
             if len(legal_actions) == 0:
                 # Should not happen in a solvable puzzle, but return a safe action (first one)
                 action = 0
@@ -612,7 +616,7 @@ def optimize_model(
 
     # Convert batch of transitions to tensors
     non_final_mask = torch.tensor(
-        tuple(map(lambda d: not d, batch.done)), dtype=torch.bool)
+        tuple(not d for d in batch.done), dtype=torch.bool)
 
     device = policy_net.device
     state_batch = torch.stack(batch.state).to(device)
@@ -710,19 +714,52 @@ def parse_args():
                         default=20, help='Log info once every N episodes.')
     args = parser.parse_args()
 
-    # Add device to args
-    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {args.device}")
-
     return args, parser
 
 
-def main():
+def prevent_sleep():
     """
-    Main training loop.
+    Prevents the system from entering sleep or turning off the display.
+    Returns a function to restore the original state.
     """
+    # TODO: (when needed) This belongs in a shared lib "os_utils.py"
 
-    args, _parser = parse_args()
+    p = platform.system()
+    if p == "Windows":
+        # pylint:disable=invalid-name
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        ES_DISPLAY_REQUIRED = 0x00000002
+        # pylint:enable=invalid-name
+
+        try:
+            # Prevent sleep
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+            print("Windows sleep prevention activated.")
+            # Return a function to restore previous state
+            def restore_sleep():
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+                print("Windows sleep prevention deactivated.")
+            return restore_sleep
+        except AttributeError:
+            print("Could not prevent sleep: Failed to call Windows API.")
+
+    # TODO: (when needed) Implement for other OS's
+    else:
+        print(
+            f"WARNING: Sleep prevention not implemented for this platform {p}.")
+
+    return lambda: None  # Return a no-op function for other systems
+
+
+def train(args):
+    """Main training loop."""
+
+    # Add device to args
+    if "device" not in args or not args.device:
+        args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {args.device}")
 
     # 1. Initialize Environment, Networks, and Optimizer
     env = SudokuEnv(puzzle_str=args.puzzle,
@@ -874,7 +911,25 @@ def main():
     delta_grid = env.current_grid - env.initial_puzzle
     print(SudokuEnv.format_grid_to_string(delta_grid))
 
+    # TODO: (when needed) Save trained model to file, load from file, continue training, test model.
+    return 0
+
+def main() -> int:
+    """Main function."""
+
+    args, _parser = parse_args()
+
+    # Prevent the computer from sleeping during training
+    restore_sleep_function = prevent_sleep()
+
+    rc = 1
+    try:
+        rc = train(args)
+    finally:
+        # This will run whether the training completes successfully or fails
+        restore_sleep_function()
+    return rc
+
 
 if __name__ == "__main__":
-    main()
-    # TODO: (when needed) Save trained model to file, load from file, continue training, test model.
+    exit( main() )

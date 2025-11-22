@@ -66,12 +66,25 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 50 --masking --reward_shaping",
+            "name": "Python: RL sudoku 100 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
-                "--episodes", "50",
+                "--episodes", "100",
+                "--masking",
+                "--reward_shaping",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku 10000 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--episodes", "10000",
                 "--masking",
                 "--reward_shaping",
             ],
