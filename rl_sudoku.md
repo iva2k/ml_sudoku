@@ -124,7 +124,7 @@ The best solution is **Action Masking** (or **Action Filtering**). This forces t
 
 We will introduce the `--masking` parameter. When enabled, the agent will only select actions that target empty, non-fixed cells, dramatically speeding up exploration and focusing learning on the true Sudoku rules.
 
-#### Key Changes in `rl_sudoku.py`:
+#### Key Changes in `rl_sudoku.py`
 
 1. **`generate_legal_mask(grid)`:** A new helper function that generates a boolean mask (size 729) where `True` indicates the action targets an empty cell.
 2. **`get_action`:**
