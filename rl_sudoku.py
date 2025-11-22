@@ -231,6 +231,7 @@ class SudokuEnv(gym.Env):
     def __init__(
         self,
         puzzle_str: Optional[str] = None,
+        sol_str: Optional[str] = None,
         reward_shaping: bool = False,
         fixed_puzzle: bool = False
     ):
@@ -248,8 +249,9 @@ class SudokuEnv(gym.Env):
         self.fixed_puzzle = fixed_puzzle
 
         # Initial puzzle (0 for empty cells)
-        self.default_puzzle = self._parse_puzzle(puzzle_str)
+        self.default_puzzle, self.default_solution = self._parse_puzzle(puzzle_str, sol_str)
         self.initial_puzzle = self.default_puzzle.copy()
+        self.solution_grid = self.default_solution.copy()
         self.current_grid = self.default_puzzle.copy()
         self.violation_count = 0
         print(
@@ -258,19 +260,22 @@ class SudokuEnv(gym.Env):
             f"Generation: {not self.fixed_puzzle}"
         )
 
-    def _parse_puzzle(self, puzzle_str: Optional[str]):
+    def _parse_puzzle(self, puzzle_str: Optional[str], sol_str: Optional[str]):
         """Converts an 81-char string (0s for empty) into a 9x9 numpy array."""
-        if puzzle_str is None:
+        if puzzle_str is None and sol_str is None:
             # Default easy puzzle for starting development
-            puzzle_str = "000260701680070090190004500820100040004602900050003028009300074040050036703018000"
-            # sol_str    = "435269781682571493197834562826195347374682915951743628519326874248957136763418259"
+            puzzle_str = "000260701680070090190004500820100040004602900050003028009300074040050036703018000"  # Puzzle
+            sol_str = "435269781682571493197834562826195347374682915951743628519326874248957136763418259"  # Solution
 
         # Ensure the string is 81 characters long and contains only digits
-        if len(puzzle_str) != 81 or not puzzle_str.isdigit():
-            raise ValueError("Puzzle string must be 81 digits (0-9).")
+        if len(puzzle_str) != 81 or not puzzle_str.isdigit() or "0" not in puzzle_str:
+            raise ValueError(f"Puzzle string must be 81 digits (0-9), must contain zeroes to be a puzzle, {len(puzzle_str)} provided.")
+        if len(sol_str) != 81 or not sol_str.isdigit() or "0" in sol_str:
+            raise ValueError(f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided.")
 
         grid = np.array([int(c) for c in puzzle_str]).reshape((9, 9))
-        return grid
+        sol_grid = np.array([int(c) for c in sol_str]).reshape((9, 9))
+        return grid, sol_grid
 
     def reset(self,
               seed: int | None = None,
@@ -282,12 +287,14 @@ class SudokuEnv(gym.Env):
         if self.fixed_puzzle:
             # Use the default puzzle
             self.initial_puzzle = self.default_puzzle.copy()
+            self.solution_grid = self.default_solution.copy()
+            # The default_puzzle and default_solution should have been set during __init__
         else:
             # Generate a new, random, solvable puzzle
-            solved = _generate_initial_grid()
+            self.solution_grid = _generate_initial_grid()
             # Keep between 25 and 35 clues for a mix of difficulties
-            clues_count = random.randint(25, 35)
-            self.initial_puzzle = _clue_grid(solved, num_clues=clues_count)
+            num_clues = random.randint(25, 35)
+            self.initial_puzzle = _clue_grid(self.solution_grid, num_clues=num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -310,38 +317,32 @@ class SudokuEnv(gym.Env):
         terminated = False
         truncated = False
 
-        # 1. Check if the cell is already filled (illegal move)
+        # 1. An action is illegal if it overwrites an existing number.
         # if self.initial_puzzle[row, col] != 0:
         #     reward = -10.0  # Penalty for overwriting a fixed cell
         # el
         if self.current_grid[row, col] != 0:
             # Penalty for wasting a step, but action masking should prevent this exploitation
             reward = -10.0
+        # 2. Check if the chosen digit matches the ground-truth solution.
         else:
-            # 2. Check for Sudoku Rule Violations (Simplified placeholder)
-            if self._is_valid_placement(self.current_grid, row, col, digit):
+            if self.solution_grid[row, col] == digit:
+                # Correct move: place the digit and give a positive reward.
                 self.current_grid[row, col] = digit
+                reward = 5.0
 
-                # --- REWARD CALCULATION ---
-                if self.reward_shaping:
-                    # Shaped Reward: Reward based on the reduction in overall violations
-                    new_violation_count = self._get_violation_count(
-                        self.current_grid)
-                    # Progress is V_before - V_after. If progress > 0, reward is positive.
-                    reward = (self.violation_count - new_violation_count) * 5.0
-                    self.violation_count = new_violation_count
-
-                    # Small time penalty to encourage quick solving
-                    reward -= 0.01
-                else:
-                    # Simple Reward
-                    reward = 1.0
-
-                # 3. Check if Solved
-                if np.all(self.current_grid != 0) and self._is_fully_solved(self.current_grid):
+                # 3. Check if the puzzle is fully solved.
+                # This happens if all cells are filled AND they match the solution.
+                if np.all(self.current_grid != 0) and np.array_equal(self.current_grid, self.solution_grid):
                     reward += 100.0  # Large reward for solving
                     terminated = True
             else:
+                # TODO: We still place the digit to let the agent see the consequences of its mistake.
+                # Incorrect move: place the digit but give a penalty.
+                # The problem with placing wrong digit is in the dead-end path.
+                # The agent is penalized for overwriting placed digits, so there is no way out of the dead-end state.
+                # self.current_grid[row, col] = digit
+
                 reward = -5.0  # Penalty for an invalid move (violates rules)
 
         # State is returned as float32 for PyTorch compatibility
