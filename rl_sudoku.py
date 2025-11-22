@@ -27,7 +27,7 @@ from collections import deque, namedtuple
 import ctypes
 import platform
 import random
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 import time
 from datetime import timedelta
 
@@ -263,17 +263,25 @@ class SudokuEnv(gym.Env):
             f"Generation: {not self.fixed_puzzle}"
         )
 
-    def _parse_puzzle(self, puzzle_str: Optional[str], sol_str: Optional[str]):
+    def _parse_puzzle(
+        self,
+        puzzle_str: Optional[str],
+        sol_str: Optional[str]
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Converts an 81-char string (0s for empty) into a 9x9 numpy array."""
         if puzzle_str is None and sol_str is None:
             # Default easy puzzle for starting development
-            puzzle_str = "000260701680070090190004500820100040004602900050003028009300074040050036703018000"  # Puzzle
-            sol_str = "435269781682571493197834562826195347374682915951743628519326874248957136763418259"  # Solution
+            puzzle_str, sol_str = (
+                "000260701680070090190004500820100040004602900050003028009300074040050036703018000",
+                "435269781682571493197834562826195347374682915951743628519326874248957136763418259"
+            )
 
         # Ensure the string is 81 characters long and contains only digits
         if len(puzzle_str) != 81 or not puzzle_str.isdigit() or "0" not in puzzle_str:
             raise ValueError(
-                f"Puzzle string must be 81 digits (0-9), must contain zeroes to be a puzzle, {len(puzzle_str)} provided.")
+                f"Puzzle string must be 81 digits (0-9), must contain zeroes to be a puzzle, "
+                f"{len(puzzle_str)} provided."
+            )
         if len(sol_str) != 81 or not sol_str.isdigit() or "0" in sol_str:
             raise ValueError(
                 f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided.")
@@ -341,15 +349,15 @@ class SudokuEnv(gym.Env):
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
                 if (np.all(self.current_grid != 0)
-                    and np.array_equal(self.current_grid, self.solution_grid)):
+                        and np.array_equal(self.current_grid, self.solution_grid)):
                     reward += 100.0  # Large reward for solving
                     terminated = True
             else:
-                # TODO: (when needed) Place the digit to let the agent see the consequences of its mistake.
-                ## Incorrect move: place the digit but give a penalty.
-                ## The problem with placing wrong digit is in the dead-end path:
-                ## There is no way out of the dead-end state as
-                ## the agent is penalized for overwriting placed digits.
+                # TODO: (when needed) Place the digit to show the agent consequences of its mistake.
+                # Incorrect move: place the digit but give a penalty.
+                # The problem with placing wrong digit is in the dead-end path:
+                # There is no way out of the dead-end state as
+                # the agent is penalized for overwriting placed digits.
                 # self.current_grid[row, col] = digit
 
                 reward = -5.0  # Penalty for an invalid move (violates rules)
@@ -738,9 +746,13 @@ def prevent_sleep():
                 ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
             print("Windows sleep prevention activated.")
             # Return a function to restore previous state
+
             def restore_sleep():
-                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
-                print("Windows sleep prevention deactivated.")
+                try:
+                    ctypes.windll.kernel32.SetThreadExecutionState(
+                        ES_CONTINUOUS)
+                finally:
+                    print("Windows sleep prevention deactivated.")
             return restore_sleep
         except AttributeError:
             print("Could not prevent sleep: Failed to call Windows API.")
@@ -758,7 +770,8 @@ def train(args):
 
     # Add device to args
     if "device" not in args or not args.device:
-        args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        args.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {args.device}")
 
     # 1. Initialize Environment, Networks, and Optimizer
@@ -848,7 +861,7 @@ def train(args):
             print(
                 f"Episode {i_episode}: New Best Reward: {episode_reward:.2f}")
             best_reward = episode_reward
-            # TODO: (when needed)) Save model checkpoint here
+            # TODO: (when needed) Save model checkpoint here
 
         if episode_solved or i_episode % args.log_episodes == 0:
             if not env.fixed_puzzle:
@@ -914,6 +927,7 @@ def train(args):
     # TODO: (when needed) Save trained model to file, load from file, continue training, test model.
     return 0
 
+
 def main() -> int:
     """Main function."""
 
@@ -932,4 +946,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    exit( main() )
+    exit(main())
