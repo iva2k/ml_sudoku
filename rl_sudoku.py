@@ -249,7 +249,8 @@ class SudokuEnv(gym.Env):
         self.fixed_puzzle = fixed_puzzle
 
         # Initial puzzle (0 for empty cells)
-        self.default_puzzle, self.default_solution = self._parse_puzzle(puzzle_str, sol_str)
+        self.default_puzzle, self.default_solution = self._parse_puzzle(
+            puzzle_str, sol_str)
         self.initial_puzzle = self.default_puzzle.copy()
         self.solution_grid = self.default_solution.copy()
         self.current_grid = self.default_puzzle.copy()
@@ -269,9 +270,11 @@ class SudokuEnv(gym.Env):
 
         # Ensure the string is 81 characters long and contains only digits
         if len(puzzle_str) != 81 or not puzzle_str.isdigit() or "0" not in puzzle_str:
-            raise ValueError(f"Puzzle string must be 81 digits (0-9), must contain zeroes to be a puzzle, {len(puzzle_str)} provided.")
+            raise ValueError(
+                f"Puzzle string must be 81 digits (0-9), must contain zeroes to be a puzzle, {len(puzzle_str)} provided.")
         if len(sol_str) != 81 or not sol_str.isdigit() or "0" in sol_str:
-            raise ValueError(f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided.")
+            raise ValueError(
+                f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided.")
 
         grid = np.array([int(c) for c in puzzle_str]).reshape((9, 9))
         sol_grid = np.array([int(c) for c in sol_str]).reshape((9, 9))
@@ -294,7 +297,8 @@ class SudokuEnv(gym.Env):
             self.solution_grid = _generate_initial_grid()
             # Keep between 25 and 35 clues for a mix of difficulties
             num_clues = random.randint(25, 35)
-            self.initial_puzzle = _clue_grid(self.solution_grid, num_clues=num_clues)
+            self.initial_puzzle = _clue_grid(
+                self.solution_grid, num_clues=num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -327,7 +331,7 @@ class SudokuEnv(gym.Env):
         # 2. Check if the chosen digit matches the ground-truth solution.
         else:
             if self.solution_grid[row, col] == digit:
-                # Correct move: place the digit and give a positive reward.
+                # Correct move: place the digit and give a positive reward
                 self.current_grid[row, col] = digit
                 reward = 5.0
 
@@ -515,7 +519,7 @@ class DQNSolver(nn.Module):
         Input x: (batch_size, 9, 9). Needs to be reshaped to (batch_size, 1, 9, 9)
         """
         # Ensure input is float and has the channel dimension
-        x = x.float().unsqueeze(1)
+        x = x.to(self.device).float().unsqueeze(1)
 
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten the tensor
@@ -621,7 +625,7 @@ def optimize_model(
     state_action_values = policy_net(state_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
-    next_state_values = torch.zeros(batch_size)
+    next_state_values = torch.zeros(batch_size, device=device)
     non_final_next_states = torch.stack(
         [s for s, done in zip(batch.next_state, batch.done) if not done]).to(device)
     if non_final_next_states.numel() > 0:
@@ -631,7 +635,7 @@ def optimize_model(
             if use_masking:
                 # Generate and apply mask to target Q-values
                 next_states_mask_np = np.stack(
-                    [generate_legal_mask(s.numpy()) for s in non_final_next_states])
+                    [generate_legal_mask(s.cpu().numpy()) for s in non_final_next_states])
                 next_states_mask_tensor = torch.from_numpy(
                     next_states_mask_np).to(device)
 
@@ -838,7 +842,7 @@ def main():
     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
     for _t in range(81):  # Max 81 steps
-        # In test mode, always exploit (no exploration)
+        # In test mode, always exploit (no exploration), but use the same device
         with torch.no_grad():
             state_tensor = torch.tensor(
                 state, dtype=torch.float32, device=args.device).unsqueeze(0)
@@ -846,7 +850,7 @@ def main():
 
             if args.masking:
                 mask = generate_legal_mask(state)
-                mask_tensor = torch.from_numpy(mask).to(args.device)
+                mask_tensor = torch.from_numpy(mask).to(state_tensor.device)
                 additive_mask = torch.where(mask_tensor,
                                             torch.tensor(
                                                 0.0, device=args.device),
