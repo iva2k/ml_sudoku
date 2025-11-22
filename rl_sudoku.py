@@ -235,7 +235,8 @@ class SudokuEnv(gym.Env):
         puzzle_str: Optional[str] = None,
         sol_str: Optional[str] = None,
         reward_shaping: bool = False,
-        fixed_puzzle: bool = False
+        fixed_puzzle: bool = False,
+        block_wrong_moves: bool = False,
     ):
         super().__init__()
 
@@ -249,6 +250,7 @@ class SudokuEnv(gym.Env):
         # RL options
         self.reward_shaping = reward_shaping
         self.fixed_puzzle = fixed_puzzle
+        self.block_wrong_moves = block_wrong_moves
 
         # Initial puzzle (0 for empty cells)
         self.default_puzzle, self.default_solution = self._parse_puzzle(
@@ -344,7 +346,7 @@ class SudokuEnv(gym.Env):
             if self.solution_grid[row, col] == digit:
                 # Correct move: place the digit and give a positive reward
                 self.current_grid[row, col] = digit
-                reward = 5.0
+                reward = 10.0
 
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
@@ -352,13 +354,14 @@ class SudokuEnv(gym.Env):
                         and np.array_equal(self.current_grid, self.solution_grid)):
                     reward += 100.0  # Large reward for solving
                     terminated = True
+            elif self._is_valid_placement(self.current_grid, row, col, digit):
+                # Correct move: place the digit and give a positive reward
+                self.current_grid[row, col] = digit
+                reward = 5.0
             else:
-                # TODO: (when needed) Place the digit to show the agent consequences of its mistake.
                 # Incorrect move: place the digit but give a penalty.
-                # The problem with placing wrong digit is in the dead-end path:
-                # There is no way out of the dead-end state as
-                # the agent is penalized for overwriting placed digits.
-                # self.current_grid[row, col] = digit
+                if not self.block_wrong_moves:
+                    self.current_grid[row, col] = digit
 
                 reward = -5.0  # Penalty for an invalid move (violates rules)
 
@@ -696,6 +699,8 @@ def parse_args():
                         help='Enable action masking (only choose empty cells).')
     parser.add_argument('--fixed_puzzle', action='store_true',
                         help='Use only given puzzle for training.')
+    parser.add_argument('--block_wrong_moves', action='store_true',
+                        help='Prevent agent from making wrong moves.')
 
     # Hyperparameter arguments
     parser.add_argument('--lr', type=float, default=LR,
@@ -777,7 +782,8 @@ def train(args):
     # 1. Initialize Environment, Networks, and Optimizer
     env = SudokuEnv(puzzle_str=args.puzzle,
                     reward_shaping=args.reward_shaping,
-                    fixed_puzzle=args.fixed_puzzle)
+                    fixed_puzzle=args.fixed_puzzle,
+                    block_wrong_moves=args.block_wrong_moves)
 
     input_shape = env.observation_space.shape
     output_size = env.action_space.n  # 729
