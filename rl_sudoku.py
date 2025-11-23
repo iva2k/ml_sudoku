@@ -320,10 +320,10 @@ class SudokuEnv(gym.Env):
         else:
             # Generate a new, random, solvable puzzle
             self.solution_grid = _generate_initial_grid()
-            # Keep between 25 and 35 clues for a mix of difficulties
-            num_clues = random.randint(25, 35)
-            self.initial_puzzle = _clue_grid(
-                self.solution_grid, num_clues=num_clues)
+
+            num_clues = random.randint(25, 55)  # Default value
+            num_clues = options.get("num_clues", num_clues) if options else num_clues
+            self.initial_puzzle = _clue_grid(self.solution_grid, num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -793,6 +793,23 @@ def prevent_sleep():
     return lambda: None  # Return a no-op function for other systems
 
 
+def curriculum_puzzle_clues(progress_ratio: float) -> int:
+    """Curriculum Learning - Select puzzle difficulty based on episodes progress."""
+    if progress_ratio < 0.25:
+        # Super easy puzzles to learn the basics
+        num_clues = random.randint(75, 80)
+    elif progress_ratio < 0.5:
+        # Easy puzzles
+        num_clues = random.randint(50, 75)
+    elif progress_ratio < 0.75:
+        # Medium difficulty puzzles
+        num_clues = random.randint(40, 55)
+    else:  # Final 40% of episodes: Hard
+        # Mix of hard-medium difficulties
+        num_clues = random.randint(25, 45)
+    return num_clues
+
+
 def train(args):
     """Main training loop."""
 
@@ -835,7 +852,12 @@ def train(args):
 
     for i_episode in range(1, args.episodes + 1):
         # 2. Reset the environment and get initial state
-        state, _ = env.reset()
+
+        # Curriculum Learning: Select puzzle difficulty based on episodes progress.
+        progress_ratio = i_episode / args.episodes
+        num_clues = curriculum_puzzle_clues(progress_ratio)
+        reset_options = { "num_clues": num_clues }
+        state, _ = env.reset(options=reset_options)
 
         episode_reward = 0
         episode_solved = False
@@ -918,7 +940,11 @@ def train(args):
 
     # --- Run a final test episode and display the solved grid ---
     print("\n--- Running Final Test Episode ---")
-    state, _ = env.reset()
+    # Curriculum Learning: Select puzzle difficulty based on episodes progress.
+    progress_ratio = 1.0
+    num_clues = curriculum_puzzle_clues(progress_ratio)
+    reset_options = { "num_clues": num_clues }
+    state, _ = env.reset(options=reset_options)
     print("Initial Puzzle:")
     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
