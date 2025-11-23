@@ -918,6 +918,8 @@ def train(args):
     current_epsilon = args.eps_start
     best_reward = -float('inf')
     solved_count = 0
+    # Track minimum clues for a solved puzzle (lower is harder)
+    min_clues_solved = 99
 
     print(f"Starting Training for {args.episodes} episodes...")
     start_time = time.time()
@@ -985,6 +987,8 @@ def train(args):
             if terminated:
                 episode_solved = True
                 solved_count += 1
+                if min_clues_solved > num_clues:
+                    min_clues_solved = num_clues
                 break
             if truncated:
                 # Typically not used in Sudoku, but good practice
@@ -1043,13 +1047,17 @@ def train(args):
     end_time = time.time()
     training_duration = end_time - start_time
     duration_str = str(timedelta(seconds=training_duration))
+    time_per_step = training_duration / steps_done
+    time_per_step_str = str(timedelta(seconds=time_per_step))
 
-    print(
-        f"\nTraining Complete. "
-        f"Final Best Reward: {best_reward:.2f} over {args.episodes} episodes. "
-        f"Total Solved: {solved_count}. "
-        f"Total time: {duration_str}"
-    )
+    difficulty_summary = f" (Hardest level {81-min_clues_solved} cell(s))" \
+        if min_clues_solved != 99 else ""
+    print("\n" + "\n  ".join([
+        f"Training Complete {'='*60}",
+        f"Final Best Reward: {best_reward:.2f} over {args.episodes} episodes.",
+        f"Total Solved: {solved_count}{difficulty_summary}",
+        f"Total time: {duration_str} ({time_per_step_str} per step)",
+    ]))
 
     # --- Run a final test episode and display the solved grid ---
     print("\n--- Running Final Test Episode ---")
