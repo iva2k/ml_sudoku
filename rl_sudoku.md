@@ -16,6 +16,9 @@ The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the for
   * **Positive Reward:** $\uparrow$ for making a valid move that respects all Sudoku rules (row, column, $3 \times 3$ box). A large $\uparrow$ for solving the entire puzzle.
   * **Negative Reward (Penalty):** $\downarrow$ for making an invalid move (e.g., placing a number that violates a rule or trying to fill an already filled cell). A small $\downarrow$ for every step to encourage efficiency.
 * **Policy ($\pi$):** The agent's strategy. It maps a given state $S$ to a probability distribution over actions $A$, i.e., $\pi(a|s)$. The goal is to learn the optimal policy $\pi^*$.
+* **Reward Design: Pure RL vs. Supervised Guidance:**
+  * **Pure RL:** A pure RL approach would only reward the agent for following the *rules* of Sudoku, not for knowing the *answer*. The agent would have to discover the correct digit for a cell through trial and error. While theoretically sound, the action space is so vast that the agent often gets stuck in a loop of making invalid moves and never learns the underlying logic.
+  * **Supervised Guidance (Practical Approach):** To make training feasible, we can introduce a supervised element. Instead of rewarding based on rule validity, we reward the agent for placing a digit that matches the pre-computed solution. This provides a much stronger and more direct learning signal, effectively teaching the agent to "imitate" the solution. While this is less of a pure discovery process, it's a practical compromise to ensure the agent learns effectively. Our implementation uses this supervised approach, but it can be turned off.
 * **Value Function ($Q(s, a)$):** The expected cumulative discounted reward starting from state $s$ and taking action $a$, then following policy $\pi$ thereafter. A neural network will often be used to approximate this function.
 
 ---
@@ -132,3 +135,19 @@ We will introduce the `--masking` parameter. When enabled, the agent will only s
    * During exploitation (greedy action), the Q-values for illegal actions are set to a very large negative number (`-1e10`), ensuring the agent never selects them.
 3. **`optimize_model`:** The same masking logic is applied to the **Target Network's** Q-values when calculating the optimal future value $V(s')$, which is essential for stable learning.
 4. **`main`:** A new command-line argument `--masking` has been added.
+
+### Curriculum Learning: Staged Difficulty
+
+Starting the training with very difficult Sudoku puzzles (e.g., only 25 clues) can be overwhelming for the agent. It's like asking a new student to solve an expert-level problem. The agent may fail to learn meaningful patterns.
+
+A better approach is **Curriculum Learning**, where the agent is first trained on easier problems and the difficulty is gradually increased as its performance improves.
+
+#### Implementation Plan
+
+We will implement a difficulty "staircase" based on the training episode number.
+
+1. **Initial Phase (Easy):** For the first block of episodes, the environment will generate puzzles with a high number of clues (e.g., 70-80). This makes it easier for the agent to find correct moves and learn the basic structure.
+2. **Intermediate Phase (Medium):** As training progresses, we reduce the number of clues (e.g., 50-75). The agent must now learn to solve puzzles requiring more steps and more complex deductions.
+3. **Final Phase (Hard):** In the later stages of training, the number of clues is reduced to a standard difficult range (e.g., 25-55), forcing the agent to generalize its learned policy to harder problems.
+
+This staged approach helps stabilize training and leads to a more robust final policy.
