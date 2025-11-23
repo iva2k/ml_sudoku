@@ -271,7 +271,14 @@ class SudokuEnv(gym.Env):
         self.solution_grid = self.default_solution.copy()
         self.current_grid = self.default_puzzle.copy()
         self.violation_count = 0
+        self.rewarded_rows = set()
+        self.rewarded_cols = set()
+        self.rewarded_boxes = set()
         print(
+            f"\n--- Environment Settings ---\n"
+            f"Puzzle Source: {'Fixed' if self.fixed_puzzle else 'Generated'}\n"
+            f"Reward Shaping: {'Enabled' if self.reward_shaping else 'Disabled'}\n"
+            # f"Action Masking: See training logs\n"
             f"Sudoku Environment Initialized. "
             f"Shaping: {self.reward_shaping}, "
             f"Generation: {not self.fixed_puzzle}"
@@ -331,6 +338,11 @@ class SudokuEnv(gym.Env):
             # Initialize violation count for the start of the episode
             self.violation_count = self._get_violation_count(self.current_grid)
 
+        # Track completed groups to avoid giving rewards multiple times
+        self.rewarded_rows = set()
+        self.rewarded_cols = set()
+        self.rewarded_boxes = set()
+
         observation = self.current_grid.astype(np.float32)
         info = {}
         return observation, info
@@ -356,10 +368,13 @@ class SudokuEnv(gym.Env):
         # 2. Check if the chosen digit matches the ground-truth solution.
         else:
             if self.solution_grid[row, col] == digit:
-                # Correct move: place the digit and give a positive reward
+                # Correct move: place the digit
                 self.current_grid[row, col] = digit
-                reward = 10.0
+                reward = 10.0  # Base reward for a correct number
+                print(f"  -> Correct guess! Placed {digit} at ({row}, {col}).")
 
+                # Check for and reward group completions (row, col, box)
+                reward += self._check_and_reward_group_completion(row, col, 50.0)
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
                 if (np.all(self.current_grid != 0)
@@ -382,6 +397,45 @@ class SudokuEnv(gym.Env):
         info = {"current_reward": reward}
 
         return observation, reward, terminated, truncated, info
+
+    def _check_and_reward_group_completion(self, r, c, reward_per_group = 50.0):
+        """
+        Checks if the row, column, or box containing the new move (r, c) is now complete
+        and correct. If so, provides a reward and logs it.
+        """
+        reward = 0.0
+
+        # 1. Check Row Completion
+        if r not in self.rewarded_rows:
+            row_slice = self.current_grid[r, :]
+            # Check if the row is full (no zeros)
+            if np.all(row_slice > 0):
+                # Check if it matches the solution
+                if np.array_equal(row_slice, self.solution_grid[r, :]):
+                    print(f"  -> Milestone! Row {r} completed correctly.")
+                    reward += reward_per_group
+                    self.rewarded_rows.add(r)
+
+        # 2. Check Column Completion
+        if c not in self.rewarded_cols:
+            col_slice = self.current_grid[:, c]
+            if np.all(col_slice > 0):
+                if np.array_equal(col_slice, self.solution_grid[:, c]):
+                    print(f"  -> Milestone! Column {c} completed correctly.")
+                    reward += reward_per_group
+                    self.rewarded_cols.add(c)
+
+        # 3. Check Box Completion
+        box_r, box_c = 3 * (r // 3), 3 * (c // 3)
+        box_idx = (box_r // 3, box_c // 3)
+        if box_idx not in self.rewarded_boxes:
+            box_slice = self.current_grid[box_r:box_r+3, box_c:box_c+3]
+            if np.all(box_slice > 0):
+                if np.array_equal(box_slice, self.solution_grid[box_r:box_r+3, box_c:box_c+3]):
+                    print(f"  -> Milestone! Box {box_idx} completed correctly.")
+                    reward += reward_per_group
+                    self.rewarded_boxes.add(box_idx)
+        return reward
 
     def _get_violation_count(self, grid):
         """Calculates the total number of rule violations (duplicates) in the entire grid."""
