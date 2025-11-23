@@ -636,7 +636,7 @@ def get_action(
 ):
     """
     Implements the epsilon-greedy policy.
-    Returns the chosen action and the new epsilon value after decay.
+    Returns the chosen action (or None if no actions are legal) and the new epsilon value.
     """
     # Use max to ensure we don't go below EPS_END
     current_epsilon = max(eps_end, epsilon)
@@ -654,8 +654,8 @@ def get_action(
             # Sample only from legal actions
             legal_actions = np.nonzero(mask)[0]
             if len(legal_actions) == 0:
-                # Should not happen in a solvable puzzle, but return a safe action (first one)
-                action = 0
+                # No legal moves are possible (board is full). Signal to terminate.
+                return None, new_epsilon
             else:
                 action = random.choice(legal_actions)
         else:
@@ -943,6 +943,11 @@ def train(args):
                 args.masking
             )
 
+            if action is None:
+                # No legal moves were available, terminate the episode
+                # print("No legal moves left. Ending episode.")
+                break
+
             # 4. Take action in environment
             observation, reward, terminated, truncated, _info = env.step(
                 action)
@@ -986,9 +991,9 @@ def train(args):
             # TODO: (when needed) Save model checkpoint here
 
         if episode_solved or i_episode % args.log_episodes == 0:
-            if not env.fixed_puzzle:
-                print(f"Episode {i_episode}: New puzzle:")
-                print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
+            # if not env.fixed_puzzle:
+            #     print(f"Episode {i_episode}: New puzzle:")
+            #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
             stats = env.episode_stats
             solved_ratio = f"{stats['correct_moves']}/{stats['empty_cells_start']}"
@@ -999,7 +1004,8 @@ def train(args):
             print(
                 f"Episode: {i_episode}/{args.episodes} "
                 f"({'Solved' if episode_solved else 'Not Solved'}), "
-                f"Steps: {steps_done}, "
+                f"Steps: {_t}, "
+                f"Epoch Steps: {steps_done}, "
                 f"Total Reward: {episode_reward:.2f}, "
                 f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                 f"Cells: {solved_ratio}, Groups: {groups_completed}"
