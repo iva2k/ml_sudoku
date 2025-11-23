@@ -26,6 +26,7 @@ We define the Environment, the Network, and the Replay Buffer
 import argparse
 from collections import deque, namedtuple
 import ctypes
+import math
 import platform
 import random
 from typing import Any, List, Optional, Tuple
@@ -820,6 +821,20 @@ def parse_args():
 
     parser.add_argument('--log_episodes', type=int,
                         default=10, help='Log info once every N episodes.')
+
+    # Testing arguments
+    parser.add_argument('--test_games', type=int, default=10,
+                        help='Number of games to test after training.')
+    parser.add_argument('--test_difficulty_min', type=int, default=6,
+                        help='Min empty cells for test puzzles.')
+    parser.add_argument('--test_difficulty_max', type=int, default=61,
+                        help='Max empty cells for test puzzles.')
+    # Model persistence
+    parser.add_argument('--save_model', type=str,
+                        default=None, help='Path to save the trained model.')
+    parser.add_argument('--load_model', type=str,
+                        default=None, help='Path to load a pre-trained model.')
+
     args = parser.parse_args()
 
     return args, parser
@@ -882,7 +897,7 @@ def curriculum_puzzle_clues(progress_ratio: float) -> int:
     return num_clues
 
 
-def train(args):
+def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     """Main training loop."""
 
     # Add device to args
@@ -891,30 +906,8 @@ def train(args):
             "cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {args.device}")
 
-    # 1. Initialize Environment, Networks, and Optimizer
-    env = SudokuEnv(
-        puzzle_str=args.puzzle,
-        reward_shaping=args.reward_shaping,
-        fixed_puzzle=args.fixed_puzzle,
-        block_wrong_moves=args.block_wrong_moves,
-    )
-
-    input_shape = env.observation_space.shape
-    output_size = env.action_space.n  # 729
-
-    policy_net = DQNSolver(input_shape, output_size,
-                           args.device).to(args.device)
-    target_net = DQNSolver(input_shape, output_size,
-                           args.device).to(args.device)
-    target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()  # Target network is always in evaluation mode
-
-    optimizer = optim.AdamW(policy_net.parameters(),
-                            lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
-    memory = ReplayBuffer(args.memory_capacity)
-
     # Training loop
-    steps_done = 0
+    epoch_steps_done = 0
     current_epsilon = args.eps_start
     best_reward = -float('inf')
     solved_count = 0
@@ -933,6 +926,7 @@ def train(args):
         reset_options = {"num_clues": num_clues}
         state, _info = env.reset(options=reset_options)
 
+        episode_steps = 0
         episode_reward = 0
         episode_solved = False
         episode_transitions = []  # Store transitions for this episode
@@ -982,7 +976,8 @@ def train(args):
                 transitions,
                 args.gamma, args.masking
             )
-            steps_done += 1
+            epoch_steps_done += 1
+            episode_steps += 1
 
             if terminated:
                 episode_solved = True
@@ -1036,8 +1031,8 @@ def train(args):
 
             print(
                 f"Episode {i_episode:6d} of {args.episodes:6d}: "
-                f"Steps: {step:3d}, "
-                f"Epoch Steps: {steps_done:6d}, "
+                f"Steps: {episode_steps:3d}, "
+                f"Epoch Steps: {epoch_steps_done:6d}, "
                 f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                 f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                 f"({'    Solved' if episode_solved else 'NOT Solved'}), "
@@ -1047,7 +1042,7 @@ def train(args):
     end_time = time.time()
     training_duration = end_time - start_time
     duration_str = str(timedelta(seconds=training_duration))
-    time_per_step = training_duration / steps_done
+    time_per_step = training_duration / epoch_steps_done
     time_per_step_str = str(timedelta(seconds=time_per_step))
 
     difficulty_summary = f" (Hardest level {81-min_clues_solved} cell(s))" \
@@ -1058,49 +1053,116 @@ def train(args):
         f"Total Solved: {solved_count}{difficulty_summary}",
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
+    return 0
 
-    # --- Run a final test episode and display the solved grid ---
-    print("\n--- Running Final Test Episode ---")
-    # Curriculum Learning: Select puzzle difficulty based on episodes progress.
-    progress_ratio = 1.0
-    num_clues = curriculum_puzzle_clues(progress_ratio)
-    reset_options = {"num_clues": num_clues}
-    state, _ = env.reset(options=reset_options)
-    print("Initial Puzzle:")
-    print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
+
+def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
+    """Runs a single episode in test mode (exploitation only) and returns the result."""
+    state = initial_state
+    episode_steps = 0
+    episode_reward = 0
+    if show_boards:
+        print("Initial Puzzle:")
+        print(SudokuEnv.format_grid_to_string(env.current_grid))
 
     for step in range(81):  # Max 81 steps
-        # In test mode, always exploit (no exploration), but use the same device
         with torch.no_grad():
             one_hot_state = state_to_one_hot(state, args.device).unsqueeze(0)
-            q_values = policy_net(one_hot_state)  # [1, 729]
+            q_values = policy_net(one_hot_state)
 
             if args.masking:
                 mask = generate_legal_mask(state)
+                if not np.any(mask):
+                    break  # No legal moves left
                 mask_tensor = torch.from_numpy(mask).to(args.device)
                 additive_mask = torch.where(
                     mask_tensor,
                     torch.tensor(0.0, device=args.device),
                     torch.tensor(ILLEGAL_ACTION_VALUE, device=args.device)
                 ).unsqueeze(0)
-                masked_q_values = q_values + additive_mask
-                action = masked_q_values.argmax().item()
+                action = (q_values + additive_mask).argmax().item()
             else:
                 action = q_values.argmax().item()
 
-        observation, _, terminated, truncated, _ = env.step(action)
+        observation, reward, terminated, truncated, _info = env.step(action)
         state = observation
+        episode_reward += reward
+        episode_steps += 1
         if terminated or truncated:
             break
 
-    print("\nFinal Grid:")
-    env.render()
+    if show_boards:
+        print("\nFinal Grid:")
+        env.render()
+        print("\nDelta (Agent's moves):")
+        delta_grid = env.current_grid - env.initial_puzzle
+        print(SudokuEnv.format_grid_to_string(delta_grid))
 
-    print("\nDelta (Agent's moves):")
-    delta_grid = env.current_grid - env.initial_puzzle
-    print(SudokuEnv.format_grid_to_string(delta_grid))
+    is_solved = np.array_equal(env.current_grid, env.solution_grid)
+    return is_solved, episode_reward, episode_steps
 
-    # TODO: (when needed) Save trained model to file, load from file, continue training, test model.
+
+def test(args, env, policy_net) -> int:
+    """Tests the trained agent on a set of puzzles."""
+    print(f"\n--- Running Test Phase ({args.test_games} games) ---")
+    solved_count = 0
+    total_reward = 0
+
+    # 1. Test on the fixed puzzle first, if provided
+    if args.puzzle:
+        print("\n1. Testing on the provided fixed puzzle...")
+        # Force reset to the fixed puzzle
+        env.fixed_puzzle = True
+        state, _ = env.reset()
+        env.fixed_puzzle = args.fixed_puzzle  # Revert to original setting
+
+        is_solved, final_reward, steps = run_test_episode(
+            args, env, policy_net, state)
+        if is_solved:
+            solved_count += 1
+        total_reward += final_reward
+
+    # 2. Test on procedurally generated puzzles
+    num_generated_games = args.test_games if not args.puzzle else args.test_games - 1
+    if num_generated_games > 0:
+        print(
+            f"\n2. Testing on {num_generated_games} generated puzzles "
+            f"(Difficulty: {args.test_difficulty_min}-{args.test_difficulty_max})..."
+        )
+        for i_game in range(1, num_generated_games+1):
+            num_clues = 81 - math.floor(0.5 + args.test_difficulty_min + (i_game - 1) * (
+                args.test_difficulty_max - args.test_difficulty_min) / num_generated_games)
+            state, _ = env.reset(options={"num_clues": num_clues})
+            is_solved, final_reward, steps = run_test_episode(
+                args, env, policy_net, state, show_boards=False)
+            if is_solved:
+                solved_count += 1
+            total_reward += final_reward
+            stats = env.episode_stats
+            solved_ratio = f"{stats['correct_moves']:2d}/{stats['empty_cells_start']:2d}"
+            groups_completed = f"R:{stats['completed_rows']}" \
+                f"/C:{stats['completed_cols']}" \
+                f"/B:{stats['completed_boxes']}"
+            print(
+                f"  Game  {i_game:6d} of {num_generated_games:6d}: "
+                f"Steps: {steps:3d}, "
+                # f"Epoch Steps: {epoch_steps_done:6d}, "
+                # f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
+                f"Cells: {solved_ratio}, Groups: {groups_completed}, "
+                f"({'    Solved' if is_solved else 'NOT Solved'}), "
+                f"Reward: {final_reward: 8.2f}, "
+            )
+
+    # 3. Report final statistics
+    solve_rate = (solved_count / args.test_games) * \
+        100 if args.test_games > 0 else 0
+    avg_reward = total_reward / args.test_games if args.test_games > 0 else 0
+
+    print("\n" + "\n  ".join([
+        f"Test Phase Complete {'='*56}",
+        f"Puzzles Solved: {solved_count} / {args.test_games} ({solve_rate:.1f}%)",
+        f"Average Reward: {avg_reward:.2f}",
+    ]))
     return 0
 
 
@@ -1109,12 +1171,48 @@ def main() -> int:
 
     args, _parser = parse_args()
 
+    # Initialize Environment, Networks, Optimizer, and Memory
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    env = SudokuEnv(
+        puzzle_str=args.puzzle,
+        reward_shaping=args.reward_shaping,
+        fixed_puzzle=args.fixed_puzzle,
+        block_wrong_moves=args.block_wrong_moves,
+    )
+    policy_net = DQNSolver(env.observation_space.shape,
+                           env.action_space.n, args.device).to(args.device)
+    target_net = DQNSolver(env.observation_space.shape,
+                           env.action_space.n, args.device).to(args.device)
+    optimizer = optim.AdamW(policy_net.parameters(),
+                            lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
+    memory = ReplayBuffer(args.memory_capacity)
+
+    # Load a pre-trained model if specified
+    if args.load_model:
+        print(f"Loading model from {args.load_model}...")
+        # TODO: (when needed) Add error handling for file not found
+        policy_net.load_state_dict(torch.load(args.load_model))
+
+    target_net.load_state_dict(policy_net.state_dict())
+    target_net.eval()  # Target network is always in evaluation mode
+
     # Prevent the computer from sleeping during training
     restore_sleep_function = prevent_sleep()
 
     rc = 1
     try:
-        rc = train(args)
+        # Run training if episodes are specified
+        if args.episodes > 0:
+            rc = train(args, env, policy_net, target_net, optimizer, memory)
+        if not rc:
+            # Save the model if a path is provided
+            if args.save_model:
+                print(f"Saving model to {args.save_model}...")
+                torch.save(policy_net.state_dict(), args.save_model)
+
+            # Run the test phase if specified
+            if args.test_games > 0:
+                rc = test(args, env, policy_net)
     finally:
         # This will run whether the training completes successfully or fails
         restore_sleep_function()
