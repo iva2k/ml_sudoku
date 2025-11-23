@@ -18,19 +18,24 @@ The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the for
 * **Policy ($\pi$):** The agent's strategy. It maps a given state $S$ to a probability distribution over actions $A$, i.e., $\pi(a|s)$. The goal is to learn the optimal policy $\pi^*$.
 * **Reward Design: Pure RL vs. Supervised Guidance:**
   * **Pure RL:** A pure RL approach would only reward the agent for following the *rules* of Sudoku, not for knowing the *answer*. The agent would have to discover the correct digit for a cell through trial and error. While theoretically sound, the action space is so vast that the agent often gets stuck in a loop of making invalid moves and never learns the underlying logic.
-  * **Supervised Guidance (Practical Approach):** To make training feasible, we can introduce a supervised element. Instead of rewarding based on rule validity, we reward the agent for placing a digit that matches the pre-computed solution. This provides a much stronger and more direct learning signal, effectively teaching the agent to "imitate" the solution. While this is less of a pure discovery process, it's a practical compromise to ensure the agent learns effectively. Our implementation uses this supervised approach, but it can be turned off.
+  * **Hybrid Approach (Implemented):** To make training feasible and robust, our implementation uses a hybrid reward system that combines supervised guidance with rule-based rewards. This provides a strong learning signal while still encouraging valid exploration.
+    * **`+100.0`:** For solving the puzzle completely.
+    * **`+10.0`:** For placing a digit that matches the pre-computed solution.
+    * **`+5.0`:** For placing a digit that is valid according to Sudoku rules, even if it doesn't match the unique solution. This encourages rule-following.
+    * **`-5.0`:** Penalty for an invalid move that violates Sudoku rules.
+    * **`-10.0`:** Penalty for trying to overwrite an already filled cell (though action masking largely prevents this).
 * **Value Function ($Q(s, a)$):** The expected cumulative discounted reward starting from state $s$ and taking action $a$, then following policy $\pi$ thereafter. A neural network will often be used to approximate this function.
 
 ---
 
 ### 2. Deep Q-Network (DQN) Algorithm
 
-Since the state space (all possible Sudoku grids) is too large to store a traditional Q-table, we'll use a deep neural network to approximate the Q-function, leading to **Deep Q-Learning (DQN)**.
+Since the state space (all possible Sudoku grids) is too large to store in a traditional Q-table, we'll use a deep neural network to approximate the Q-function, leading to **Deep Q-Learning (DQN)**.
 
 * **Q-Network:** A neural network $\theta$ (a CNN/DNN) that takes the state $S$ as input and outputs the Q-values for all $729$ possible actions. $Q(S, A; \theta)$.
 * **Target Network:** A second, identical network $\theta^{-}$ whose parameters are updated less frequently (e.g., every $N$ steps) from the main Q-Network. This stabilizes the training.
-* **Bellman Equation & Loss:** The network is trained by minimizing the **Mean Squared Error (MSE) loss** between the current Q-value and the target Q-value, which is derived from the Bellman equation:
-$$L(\theta) = E_{s, a, r, s'} \left[ \left( Q(s, a; \theta) - y \right)^2 \right]$$
+* **Bellman Equation & Loss:** The network is trained by minimizing the **Smooth L1 Loss (Huber Loss)** between the current Q-value and the target Q-value. This loss function is more robust to outliers than Mean Squared Error (MSE), which helps stabilize training when large rewards and penalties are present. The loss is calculated based on the Bellman equation:
+$$L(\theta) = E_{s, a, r, s'} \left[ \text{SmoothL1} \left( Q(s, a; \theta), y \right) \right]$$
 Where the target $y$ is:
 $$y = r + \gamma \max_{a'} Q(s', a'; \theta^{-})$$
 * **Experience Replay:** A buffer (deque) is used to store past experiences $(s, a, r, s', \text{done})$. Training samples are drawn randomly from this buffer, which breaks the correlation between sequential states and greatly stabilizes learning.
