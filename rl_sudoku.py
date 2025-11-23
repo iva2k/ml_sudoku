@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # rl_sudoku.py
+# pylint:disable=too-many-lines
 
 """Sudoku RL agent using PyTorch.
 
@@ -274,6 +275,7 @@ class SudokuEnv(gym.Env):
         self.rewarded_rows = set()
         self.rewarded_cols = set()
         self.rewarded_boxes = set()
+        self.episode_stats = {}
         print(
             f"\n--- Environment Settings ---\n"
             f"Puzzle Source: {'Fixed' if self.fixed_puzzle else 'Generated'}\n"
@@ -329,7 +331,8 @@ class SudokuEnv(gym.Env):
             self.solution_grid = _generate_initial_grid()
 
             num_clues = random.randint(25, 55)  # Default value
-            num_clues = options.get("num_clues", num_clues) if options else num_clues
+            num_clues = options.get(
+                "num_clues", num_clues) if options else num_clues
             self.initial_puzzle = _clue_grid(self.solution_grid, num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
@@ -338,14 +341,21 @@ class SudokuEnv(gym.Env):
             # Initialize violation count for the start of the episode
             self.violation_count = self._get_violation_count(self.current_grid)
 
+        # Initialize per-episode statistics
+        self.episode_stats = {
+            "empty_cells_start": np.count_nonzero(self.initial_puzzle == 0),
+            "correct_moves": 0,
+            "completed_rows": 0,
+            "completed_cols": 0,
+            "completed_boxes": 0,
+        }
         # Track completed groups to avoid giving rewards multiple times
         self.rewarded_rows = set()
         self.rewarded_cols = set()
         self.rewarded_boxes = set()
 
         observation = self.current_grid.astype(np.float32)
-        info = {}
-        return observation, info
+        return observation, self.episode_stats
 
     def step(self, action):
         """
@@ -371,10 +381,12 @@ class SudokuEnv(gym.Env):
                 # Correct move: place the digit
                 self.current_grid[row, col] = digit
                 reward = 10.0  # Base reward for a correct number
-                print(f"  -> Correct guess! Placed {digit} at ({row}, {col}).")
+                self.episode_stats["correct_moves"] += 1
+                # print(f"  -> Correct guess! Placed {digit} at ({row}, {col}).")
 
                 # Check for and reward group completions (row, col, box)
-                reward += self._check_and_reward_group_completion(row, col, 50.0)
+                reward += self._check_and_reward_group_completion(
+                    row, col, 50.0)
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
                 if (np.all(self.current_grid != 0)
@@ -398,7 +410,7 @@ class SudokuEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-    def _check_and_reward_group_completion(self, r, c, reward_per_group = 50.0):
+    def _check_and_reward_group_completion(self, r, c, reward_per_group=50.0):
         """
         Checks if the row, column, or box containing the new move (r, c) is now complete
         and correct. If so, provides a reward and logs it.
@@ -412,18 +424,20 @@ class SudokuEnv(gym.Env):
             if np.all(row_slice > 0):
                 # Check if it matches the solution
                 if np.array_equal(row_slice, self.solution_grid[r, :]):
-                    print(f"  -> Milestone! Row {r} completed correctly.")
+                    # print(f"  -> Milestone! Row {r} completed correctly.")
                     reward += reward_per_group
                     self.rewarded_rows.add(r)
+                    self.episode_stats["completed_rows"] += 1
 
         # 2. Check Column Completion
         if c not in self.rewarded_cols:
             col_slice = self.current_grid[:, c]
             if np.all(col_slice > 0):
                 if np.array_equal(col_slice, self.solution_grid[:, c]):
-                    print(f"  -> Milestone! Column {c} completed correctly.")
+                    # print(f"  -> Milestone! Column {c} completed correctly.")
                     reward += reward_per_group
                     self.rewarded_cols.add(c)
+                    self.episode_stats["completed_cols"] += 1
 
         # 3. Check Box Completion
         box_r, box_c = 3 * (r // 3), 3 * (c // 3)
@@ -432,9 +446,10 @@ class SudokuEnv(gym.Env):
             box_slice = self.current_grid[box_r:box_r+3, box_c:box_c+3]
             if np.all(box_slice > 0):
                 if np.array_equal(box_slice, self.solution_grid[box_r:box_r+3, box_c:box_c+3]):
-                    print(f"  -> Milestone! Box {box_idx} completed correctly.")
+                    # print(f"  -> Milestone! Box {box_idx} completed correctly.")
                     reward += reward_per_group
                     self.rewarded_boxes.add(box_idx)
+                    self.episode_stats["completed_boxes"] += 1
         return reward
 
     def _get_violation_count(self, grid):
@@ -801,7 +816,7 @@ def parse_args():
                         default=EPS_DECAY, help='Decay rate for epsilon.')
 
     parser.add_argument('--log_episodes', type=int,
-                        default=20, help='Log info once every N episodes.')
+                        default=10, help='Log info once every N episodes.')
     args = parser.parse_args()
 
     return args, parser
@@ -910,8 +925,8 @@ def train(args):
         # Curriculum Learning: Select puzzle difficulty based on episodes progress.
         progress_ratio = i_episode / args.episodes
         num_clues = curriculum_puzzle_clues(progress_ratio)
-        reset_options = { "num_clues": num_clues }
-        state, _ = env.reset(options=reset_options)
+        reset_options = {"num_clues": num_clues}
+        state, _info = env.reset(options=reset_options)
 
         episode_reward = 0
         episode_solved = False
@@ -974,11 +989,20 @@ def train(args):
             if not env.fixed_puzzle:
                 print(f"Episode {i_episode}: New puzzle:")
                 print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
+
+            stats = env.episode_stats
+            solved_ratio = f"{stats['correct_moves']}/{stats['empty_cells_start']}"
+            groups_completed = f"R:{stats['completed_rows']}" \
+                f"/C:{stats['completed_cols']}" \
+                f"/B:{stats['completed_boxes']}"
+
             print(
-                f"Episode: {i_episode}/{args.episodes} (Solved: {solved_count}), "
+                f"Episode: {i_episode}/{args.episodes} "
+                f"({'Solved' if episode_solved else 'Not Solved'}), "
                 f"Steps: {steps_done}, "
                 f"Total Reward: {episode_reward:.2f}, "
-                f"Epsilon: {max(args.eps_end, current_epsilon):.4f}"
+                f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
+                f"Cells: {solved_ratio}, Groups: {groups_completed}"
             )
 
     end_time = time.time()
@@ -997,7 +1021,7 @@ def train(args):
     # Curriculum Learning: Select puzzle difficulty based on episodes progress.
     progress_ratio = 1.0
     num_clues = curriculum_puzzle_clues(progress_ratio)
-    reset_options = { "num_clues": num_clues }
+    reset_options = {"num_clues": num_clues}
     state, _ = env.reset(options=reset_options)
     print("Initial Puzzle:")
     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
