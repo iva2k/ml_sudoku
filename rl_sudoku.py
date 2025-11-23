@@ -28,7 +28,7 @@ from collections import deque, namedtuple
 import ctypes
 import platform
 import random
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import time
 from datetime import timedelta
 
@@ -233,7 +233,7 @@ def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
 
 # State/action transition data structure for the Replay Buffer
 Transition = namedtuple(
-    'Transition', ('state', 'action', 'reward', 'next_state', 'done'))
+    'Transition', ('state', 'action', 'reward', 'next_state', 'done', 'episode'))
 
 
 class SudokuEnv(gym.Env):
@@ -277,13 +277,10 @@ class SudokuEnv(gym.Env):
         self.rewarded_boxes = set()
         self.episode_stats = {}
         print(
-            f"\n--- Environment Settings ---\n"
-            f"Puzzle Source: {'Fixed' if self.fixed_puzzle else 'Generated'}\n"
-            f"Reward Shaping: {'Enabled' if self.reward_shaping else 'Disabled'}\n"
-            # f"Action Masking: See training logs\n"
             f"Sudoku Environment Initialized. "
-            f"Shaping: {self.reward_shaping}, "
-            f"Generation: {not self.fixed_puzzle}"
+            f"Puzzle Source: {'Fixed' if self.fixed_puzzle else 'Generated'}, "
+            # f"Reward Shaping: {'Enabled' if self.reward_shaping else 'Disabled'}"
+            f"Reward Shaping: {self.reward_shaping}"
         )
 
     def _parse_puzzle(
@@ -691,19 +688,23 @@ def optimize_model(
     policy_net,
     target_net,
     optimizer,
-    memory,
-    batch_size,
+    transitions: List[Transition],
     gamma,
-    use_masking: bool = False
+    use_masking: bool = False,
 ):
     """
     Performs one step of optimization on the Policy Network.
 
     BELLMAN LOSS AND BACKPROP
+
+    :param transitions: List of transitions to train on.
     """
-    transitions = memory.sample(batch_size)
+
     if not transitions:
         return
+
+    # Determine the actual batch size from the transitions list
+    batch_size = len(transitions)
 
     # Transpose the batch
     batch = Transition(*zip(*transitions))
@@ -728,12 +729,14 @@ def optimize_model(
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
     next_state_values = torch.zeros(batch_size, device=device)
-    non_final_next_states = torch.stack(
-        [state_to_one_hot(s.numpy(), device)
-         for s, done in zip(batch.next_state, batch.done)
-         if not done]
-    )
-    if non_final_next_states.numel() > 0:
+
+    # Only proceed if there are non-final states
+    if non_final_mask.any():
+        non_final_next_states = torch.stack(
+            [state_to_one_hot(s.numpy(), device)
+             for s, done in zip(batch.next_state, batch.done)
+             if not done]
+        )
         with torch.no_grad():
             target_q_values = target_net(non_final_next_states)
 
@@ -866,10 +869,10 @@ def curriculum_puzzle_clues(progress_ratio: float) -> int:
     """Curriculum Learning - Select puzzle difficulty based on episodes progress."""
     if progress_ratio < 0.25:
         # Super easy puzzles to learn the basics
-        num_clues = random.randint(75, 80)
+        num_clues = random.randint(78, 80)
     elif progress_ratio < 0.5:
         # Easy puzzles
-        num_clues = random.randint(50, 75)
+        num_clues = random.randint(50, 78)
     elif progress_ratio < 0.75:
         # Medium difficulty puzzles
         num_clues = random.randint(40, 55)
@@ -930,9 +933,10 @@ def train(args):
 
         episode_reward = 0
         episode_solved = False
+        episode_transitions = []  # Store transitions for this episode
 
         # 3. Run the episode
-        for _t in range(81):  # Max 81 steps (cells) per episode
+        for step in range(81):  # Max 81 steps (cells) per episode
             action, current_epsilon = get_action(
                 state,
                 policy_net,
@@ -959,15 +963,23 @@ def train(args):
             state_tensor = torch.from_numpy(state).float()  # Stored on CPU
             next_state_tensor = torch.from_numpy(
                 next_state).float()  # Stored on CPU
-            memory.push(state_tensor, action, reward, next_state_tensor, done)
+            transition = Transition(
+                state_tensor, action, reward, next_state_tensor, done, i_episode)
+            memory.push(*transition)
+            # Also store for potential end-of-episode training
+            episode_transitions.append(transition)
 
             # Move to the next state
             state = next_state
             episode_reward += reward
 
             # 6. Perform optimization step
-            optimize_model(policy_net, target_net, optimizer,
-                           memory, args.batch_size, args.gamma, args.masking)
+            transitions = memory.sample(args.batch_size)
+            optimize_model(
+                policy_net, target_net, optimizer,
+                transitions,
+                args.gamma, args.masking
+            )
             steps_done += 1
 
             if terminated:
@@ -978,37 +990,54 @@ def train(args):
                 # Typically not used in Sudoku, but good practice
                 break
 
+        # Hindsight Experience Replay (HER): After an episode finishes (win or lose),
+        # perform an extra training pass on its full trajectory. This provides immediate
+        # feedback on the outcome.
+        if episode_transitions:
+            # For successful episodes, this reinforces the good moves.
+            # For failed episodes, this reinforces the penalties for bad moves.
+            # if episode_solved:
+            #     print(f"Episode {i_episode}: Solved! Performing hindsight training.")
+            # else:
+            #     print(f"Episode {i_episode}: Failed. Performing hindsight training.")
+
+            optimize_model(
+                policy_net, target_net, optimizer,
+                episode_transitions,
+                args.gamma, args.masking
+            )
+
         # 7. Update the target network periodically
         if i_episode % args.target_update == 0:
             target_net.load_state_dict(policy_net.state_dict())
 
         # 8. Logging and Reporting
+        best_reward_str = ""
         if best_reward == -float('inf') or episode_reward > best_reward:
             # if best_reward != -float('inf'):
-            print(
-                f"Episode {i_episode}: New Best Reward: {episode_reward:.2f}")
+            best_reward_str = " (New Best Reward)"
             best_reward = episode_reward
             # TODO: (when needed) Save model checkpoint here
 
-        if episode_solved or i_episode % args.log_episodes == 0:
+        if episode_solved or best_reward_str or i_episode % args.log_episodes == 0:
             # if not env.fixed_puzzle:
             #     print(f"Episode {i_episode}: New puzzle:")
             #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
             stats = env.episode_stats
-            solved_ratio = f"{stats['correct_moves']}/{stats['empty_cells_start']}"
+            solved_ratio = f"{stats['correct_moves']:2d}/{stats['empty_cells_start']:2d}"
             groups_completed = f"R:{stats['completed_rows']}" \
                 f"/C:{stats['completed_cols']}" \
                 f"/B:{stats['completed_boxes']}"
 
             print(
-                f"Episode: {i_episode}/{args.episodes} "
-                f"({'Solved' if episode_solved else 'Not Solved'}), "
-                f"Steps: {_t}, "
-                f"Epoch Steps: {steps_done}, "
-                f"Total Reward: {episode_reward:.2f}, "
+                f"Episode {i_episode:6d} of {args.episodes:6d}: "
+                f"Steps: {step:3d}, "
+                f"Epoch Steps: {steps_done:6d}, "
                 f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
-                f"Cells: {solved_ratio}, Groups: {groups_completed}"
+                f"Cells: {solved_ratio}, Groups: {groups_completed}, "
+                f"({'    Solved' if episode_solved else 'NOT Solved'}), "
+                f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
             )
 
     end_time = time.time()
@@ -1032,7 +1061,7 @@ def train(args):
     print("Initial Puzzle:")
     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
-    for _t in range(81):  # Max 81 steps
+    for step in range(81):  # Max 81 steps
         # In test mode, always exploit (no exploration), but use the same device
         with torch.no_grad():
             one_hot_state = state_to_one_hot(state, args.device).unsqueeze(0)

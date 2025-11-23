@@ -156,3 +156,21 @@ We will implement a difficulty "staircase" based on the training episode number.
 3. **Final Phase (Hard):** In the later stages of training, the number of clues is reduced to a standard difficult range (e.g., 25-55), forcing the agent to generalize its learned policy to harder problems.
 
 This staged approach helps stabilize training and leads to a more robust final policy.
+
+### Hindsight Experience Replay (HER)
+
+Standard DQN training involves sampling random past experiences from a large replay buffer. While effective, this method treats all experiences equally and learns from them in a disconnected fashion.
+
+**Hindsight Experience Replay (HER)** is a technique that leverages the outcome of an entire episode to provide more focused training. After an episode concludes, we have a complete trajectory of moves that led to either a success (solved puzzle) or a failure (unsolved board). This complete story is a powerful learning signal.
+
+#### Implementation
+
+Our implementation of HER works as follows:
+
+1. **Collect Episode Trajectory:** During an episode, every transition `(state, action, reward, next_state)` is stored in a temporary list, `episode_transitions`.
+2. **End-of-Episode Training:** Once the episode finishes (win or lose), we perform an **additional, immediate optimization step**.
+3. **Focused Learning:** The `optimize_model` function is called with the entire `episode_transitions` list. This forces the agent to perform a gradient update based on the full sequence of events.
+   * For a **successful episode**, this reinforces the entire chain of moves that led to the large final reward.
+   * For a **failed episode**, this reinforces the penalties for the incorrect moves that led to a dead end.
+
+This approach provides immediate, contextual feedback to the agent, helping it learn much more quickly which sequences of actions are promising and which are not, rather than waiting for those transitions to be randomly sampled from the buffer over time.
