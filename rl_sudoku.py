@@ -61,7 +61,7 @@ def _generate_initial_grid1() -> np.ndarray:
     grid = np.zeros((9, 9), dtype=np.int32)
     nums = list(range(1, 10))
 
-    def find_empty(g):
+    def find_blank(g):
         for r in range(9):
             for c in range(9):
                 if g[r, c] == 0:
@@ -83,7 +83,7 @@ def _generate_initial_grid1() -> np.ndarray:
         return True
 
     def solve(g):
-        find = find_empty(g)
+        find = find_blank(g)
         if not find:
             return True  # Solved
         else:
@@ -207,12 +207,12 @@ def action_decode(action):
 def generate_legal_mask(grid):
     """
     Generates a boolean mask of size 729 marking legal actions. True indicates a legal action: 
-    placing any digit (1-9) in an empty cell (value 0).
+    placing any digit (1-9) in a blank cell (value 0).
     """
     mask = np.zeros(9 * 9 * 9, dtype=bool)
     for r in range(9):
         for c in range(9):
-            # An action is only legal if the target cell is currently empty
+            # An action is only legal if the target cell is currently blank
             if grid[r, c] == 0:
                 for d in range(1, 10):
                     action_idx = action_encode(r, c, d)
@@ -257,7 +257,7 @@ class SudokuEnv(gym.Env):
         # 9 rows, 9 columns, digits 1-9.
         # Action space is discrete, but we'll map 0-728 to (row, col, digit)
         self.action_space = gym.spaces.Discrete(9 * 9 * 9)
-        # Observation space is 9x9 grid, values 0 (empty) to 9
+        # Observation space is 9x9 grid, values 0 (blank) to 9
         self.observation_space = gym.spaces.Box(
             low=0, high=9, shape=(9, 9), dtype=np.int32)
 
@@ -266,7 +266,7 @@ class SudokuEnv(gym.Env):
         self.fixed_puzzle = fixed_puzzle
         self.block_wrong_moves = block_wrong_moves
 
-        # Initial puzzle (0 for empty cells)
+        # Initial puzzle (0 for blank cells)
         self.default_puzzle, self.default_solution = self._parse_puzzle(
             puzzle_str, sol_str)
         self.initial_puzzle = self.default_puzzle.copy()
@@ -289,7 +289,7 @@ class SudokuEnv(gym.Env):
         puzzle_str: Optional[str],
         sol_str: Optional[str]
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Converts an 81-char string (0s for empty) into a 9x9 numpy array."""
+        """Converts an 81-char string (0 for blank) into a 9x9 numpy array."""
         if puzzle_str is None and sol_str is None:
             # Default easy puzzle for starting development
             puzzle_str, sol_str = (
@@ -341,7 +341,7 @@ class SudokuEnv(gym.Env):
 
         # Initialize per-episode statistics
         self.episode_stats = {
-            "empty_cells_start": np.count_nonzero(self.initial_puzzle == 0),
+            "blank_cells_start": np.count_nonzero(self.initial_puzzle == 0),
             "correct_moves": 0,
             "completed_rows": 0,
             "completed_cols": 0,
@@ -508,7 +508,7 @@ class SudokuEnv(gym.Env):
 
     def _is_fully_solved(self, grid):
         """Checks if the grid is full and all rows, columns, and 3x3 boxes are valid."""
-        # 1. Check if there are any empty cells (0s) left.
+        # 1. Check if there are any blank cells (0) left.
         if np.any(grid == 0):
             return False
 
@@ -788,11 +788,11 @@ def parse_args():
     parser.add_argument('--episodes', type=int,
                         default=MAX_EPISODES, help='Number of episodes to train.')
     parser.add_argument('--puzzle', type=str, default=None,
-                        help='Initial Sudoku puzzle string (81 chars, 0 for empty).')
+                        help='Initial Sudoku puzzle string (81 chars, 0 for blank).')
     parser.add_argument('--reward_shaping', action='store_true',
                         help='Enable reward shaping (progress-based rewards).')
     parser.add_argument('--masking', action='store_true',
-                        help='Enable action masking (only choose empty cells).')
+                        help='Enable action masking (only choose blank cells).')
     parser.add_argument('--fixed_puzzle', action='store_true',
                         help='Use only given puzzle for training.')
     parser.add_argument('--block_wrong_moves', action='store_true',
@@ -826,9 +826,9 @@ def parse_args():
     parser.add_argument('--test_games', type=int, default=10,
                         help='Number of games to test after training.')
     parser.add_argument('--test_difficulty_min', type=int, default=6,
-                        help='Min empty cells for test puzzles.')
+                        help='Min blank cells for test puzzles.')
     parser.add_argument('--test_difficulty_max', type=int, default=61,
-                        help='Max empty cells for test puzzles.')
+                        help='Max blank cells for test puzzles.')
     # Model persistence
     parser.add_argument('--save_model', type=str,
                         default=None, help='Path to save the trained model.')
@@ -1024,7 +1024,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
             stats = env.episode_stats
-            solved_ratio = f"{stats['correct_moves']:2d}/{stats['empty_cells_start']:2d}"
+            solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
             groups_completed = f"R:{stats['completed_rows']}" \
                 f"/C:{stats['completed_cols']}" \
                 f"/B:{stats['completed_boxes']}"
@@ -1139,7 +1139,7 @@ def test(args, env, policy_net) -> int:
                 solved_count += 1
             total_reward += final_reward
             stats = env.episode_stats
-            solved_ratio = f"{stats['correct_moves']:2d}/{stats['empty_cells_start']:2d}"
+            solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
             groups_completed = f"R:{stats['completed_rows']}" \
                 f"/C:{stats['completed_cols']}" \
                 f"/B:{stats['completed_boxes']}"

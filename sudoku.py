@@ -52,7 +52,7 @@ class Sudoku:
         a = [int(c) for c in board]
         return np.reshape(a, (9,9,))
 
-    def count_empty(self, board):
+    def count_blanks(self, board):
         board = self.str_to_arr(board) if isinstance(board, str) else board
         count = 0
         for row in range(9):
@@ -94,10 +94,10 @@ class Sudoku:
 
     def solve_brute(self, board):
         board = self.str_to_arr(board) if isinstance(board, str) else board
-        empty_cell = self.next_box(board)
-        if empty_cell is False:
+        blank_cell = self.next_box(board)
+        if blank_cell is False:
             return board
-        row, col = empty_cell
+        row, col = blank_cell
         for n in range(1,10):
             if self.possible(board, row, col, n):
                 board[row][col] = n
@@ -112,8 +112,8 @@ class Sudoku:
         row, col = None, None
         while True:
             not_solved = self.next_box(board)
-            empty_cell = self.next_box(board, row, col)
-            if empty_cell is False:
+            blank_cell = self.next_box(board, row, col)
+            if blank_cell is False:
                 if not_solved is False:
                     return board
                 # Reached the end of board, no elimination possible, do brute-force
@@ -127,7 +127,7 @@ class Sudoku:
                             return result
                     # brute_board[row][col] = 0
                 return False
-            row, col = empty_cell
+            row, col = blank_cell
             vals = []
             for n in range(1,10):
                 if self.possible(board, row, col, n):
@@ -150,7 +150,7 @@ class Sudoku:
         print()
         print(f'Solver using method {name}')
         self.print(board)
-        print(f'Empty: {self.count_empty(board)}')
+        print(f'Blanks: {self.count_blanks(board)}')
         print()
         q = copy.copy(board)
         start_time = timer()

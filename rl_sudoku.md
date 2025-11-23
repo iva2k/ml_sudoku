@@ -10,8 +10,8 @@ The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the for
 
 * **Agent:** The solver (neural network).
 * **Environment:** The Sudoku grid and the rules of the game.
-* **State ($S$):** The current configuration of the $9 \times 9$ Sudoku board. This can be represented as a $9 \times 9$ matrix where empty cells are $0$ and filled cells are $1-9$.
-* **Action ($A$):** The set of all possible moves the agent can make. A move is defined by placing a digit ($1-9$) into a specific empty cell (row, col). The total action space size is $9 \times 9 \times 9 = 729$.
+* **State ($S$):** The current configuration of the $9 \times 9$ Sudoku board. This can be represented as a $9 \times 9$ matrix where blanks (empty cells) are $0$ and filled cells are $1-9$.
+* **Action ($A$):** The set of all possible moves the agent can make. A move is defined by placing a digit ($1-9$) into a specific blank (row, col). The total action space size is $9 \times 9 \times 9 = 729$.
 * **Reward ($R$):** The scalar feedback the environment gives the agent after an action. This is the crucial part to design:
   * **Positive Reward:** $\uparrow$ for making a valid move that respects all Sudoku rules (row, column, $3 \times 3$ box). A large $\uparrow$ for solving the entire puzzle.
   * **Negative Reward (Penalty):** $\downarrow$ for making an invalid move (e.g., placing a number that violates a rule or trying to fill an already filled cell). A small $\downarrow$ for every step to encourage efficiency.
@@ -51,7 +51,7 @@ The environment defines the Sudoku game logic. We will use the `gymnasium` (form
 * **State Representation:**
 
   * Input to the network: A $9 \times 9 \times 1$ tensor (for a CNN) or a flattened vector of $81$ elements (for a DNN). Values are $0-9$.
-  * **Alternative Input:** To make the CNN learn more easily, we could use a **one-hot encoding** of the board, resulting in a $9 \times 9 \times 10$ input tensor, where the last dimension represents $0$ (empty) and $1-9$. This is often superior for $\text{CNN}$s.
+  * **Alternative Input:** To make the CNN learn more easily, we could use a **one-hot encoding** of the board, resulting in a $9 \times 9 \times 10$ input tensor, where the last dimension represents $0$ (blank) and $1-9$. This is often superior for $\text{CNN}$s.
 * **Action Mapping:** Map the network's $729$-dimensional output (Q-values) back to a $(row, col, digit)$ triplet for the move.
 * **Transition ($\text{step}$ function):** This function takes an action, updates the state, and returns:
   1. The **next state** $S'$.
@@ -102,7 +102,7 @@ This phase focuses on the heart of the Sudoku problem: defining the rules and st
 1. **Environment Initialization (`__init__` and `reset`):** Implement puzzle loading and state representation (a $9 \times 9$ array/tensor). A simple starting puzzle is sufficient initially.
 2. **Action Validation and Reward:** Implement the `SudokuEnv.step` method. This is critical.
    * Parse the action $(r, c, d)$.
-   * Check if the cell $(r, c)$ is empty.
+   * Check if the cell $(r, c)$ is blank.
    * Check if placing $d$ violates Sudoku rules (row, col, $3 \times 3$ box).
    * Assign a simple reward: large positive reward for a *valid* move, large negative penalty for an *invalid* move (violating rules), small negative penalty for trying to overwrite a fixed cell.
 3. **Done Condition:** Check if the grid is fully filled *and* valid (solved).
@@ -124,17 +124,17 @@ This phase connects the environment to the PyTorch neural network and implements
 
 That's a very common and important issue when applying Reinforcement Learning to constrained environments like Sudoku. What we can observe is the agent spending most of its time exploring the vast number of **illegal actions** (e.g., trying to place a number in a fixed starting cell, or trying to place a number in an already filled cell).
 
-The current action space has $9 \times 9 \times 9 = 729$ total actions. If only 10 spots are empty, $719$ of those actions are pointless. The agent must waste thousands of steps to learn that these $719$ actions always lead to a harsh penalty.
+The current action space has $9 \times 9 \times 9 = 729$ total actions. If only 10 spots are blank, $719$ of those actions are pointless. The agent must waste thousands of steps to learn that these $719$ actions always lead to a harsh penalty.
 
-The best solution is **Action Masking** (or **Action Filtering**). This forces the agent's policy to only consider actions that are *legal* (i.e., placing a number in a non-fixed, currently empty cell).
+The best solution is **Action Masking** (or **Action Filtering**). This forces the agent's policy to only consider actions that are *legal* (i.e., placing a number in a non-fixed, currently blank cell).
 
 ![Action Masking in Reinforcement Learning](images/agent-environment.jpg)
 
-We will introduce the `--masking` parameter. When enabled, the agent will only select actions that target empty, non-fixed cells, dramatically speeding up exploration and focusing learning on the true Sudoku rules.
+We will introduce the `--masking` parameter. When enabled, the agent will only select actions that target blank, non-fixed cells, dramatically speeding up exploration and focusing learning on the true Sudoku rules.
 
 #### Key Changes in `rl_sudoku.py`
 
-1. **`generate_legal_mask(grid)`:** A new helper function that generates a boolean mask (size 729) where `True` indicates the action targets an empty cell.
+1. **`generate_legal_mask(grid)`:** A new helper function that generates a boolean mask (size 729) where `True` indicates the action targets a blank cell.
 2. **`get_action`:**
    * If masking is enabled, the agent samples a random action only from the set of **legal actions** during exploration ($\epsilon$-greedy).
    * During exploitation (greedy action), the Q-values for illegal actions are set to a very large negative number (`-1e10`), ensuring the agent never selects them.
