@@ -218,6 +218,18 @@ def generate_legal_mask(grid):
     return mask
 
 
+def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
+    """Converts a 9x9 grid of 0-9 values to a 10x9x9 one-hot encoded tensor on the given device."""
+    # Create a 10x9x9 tensor of zeros
+    one_hot = torch.zeros((10, 9, 9), dtype=torch.float32, device=device)
+    # Use advanced indexing to set the '1's.
+    # For each cell (r, c), the value grid[r, c] determines the channel.
+    rows, cols = np.indices((9, 9))
+    one_hot[grid, rows, cols] = 1
+    # The result is already on the correct device
+    return one_hot
+
+
 # State/action transition data structure for the Replay Buffer
 Transition = namedtuple(
     'Transition', ('state', 'action', 'reward', 'next_state', 'done'))
@@ -504,10 +516,12 @@ class DQNSolver(nn.Module):
         super().__init__()
         self.device = device
 
+        # TODO: (when needed) Implement tying _input_shape to the CNN input shape.
+
         # Use CNN to capture local structure (rows, columns, 3x3 boxes)
         self.conv = nn.Sequential(
-            # 1. First Conv: 1 input channel (the grid), 64 output channels
-            nn.Conv2d(1, 64, kernel_size=3, padding=1),
+            # 1. First Conv: 10 input channel (one-hot encoded tensor), 64 output channels
+            nn.Conv2d(10, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             # 2. Second Conv
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
@@ -531,10 +545,10 @@ class DQNSolver(nn.Module):
     def forward(self, x):
         """
         Forward pass through the CNN and then the fully connected layers.
-        Input x: (batch_size, 9, 9). Needs to be reshaped to (batch_size, 1, 9, 9)
+        Input x: (batch_size, 10, 9, 9) for one-hot encoded state.
         """
-        # Ensure input is float and has the channel dimension
-        x = x.to(self.device).float().unsqueeze(1)
+        # Input is already a one-hot tensor
+        x = x.to(self.device)
 
         x = self.conv(x)
         x = x.view(x.size(0), -1)  # Flatten the tensor
@@ -581,20 +595,20 @@ def get_action(
         # Exploit: Choose the action with the highest predicted Q-value
         with torch.no_grad():
             # Add batch dimension and get Q-values
-            state_tensor = torch.tensor(
-                state, dtype=torch.float32, device=policy_net.device).unsqueeze(0)
-            q_values = policy_net(state_tensor)
+            one_hot_state = state_to_one_hot(
+                state, policy_net.device).unsqueeze(0)
+            q_values = policy_net(one_hot_state)
 
             if use_masking:
                 # Apply mask: set Q-values of illegal actions to a very small number
                 # Create a mask with 0 for legal actions and a large negative value for illegal ones
                 mask_tensor = torch.from_numpy(mask).to(policy_net.device)
-                additive_mask = torch.where(mask_tensor,
-                                            torch.tensor(
-                                                0.0, device=policy_net.device),
-                                            torch.tensor(ILLEGAL_ACTION_VALUE,
-                                                         device=policy_net.device)
-                                            ).unsqueeze(0)
+                additive_mask = torch.where(
+                    mask_tensor,
+                    torch.tensor(0.0, device=policy_net.device),
+                    torch.tensor(ILLEGAL_ACTION_VALUE,
+                                 device=policy_net.device)
+                ).unsqueeze(0)
                 masked_q_values = q_values + additive_mask
                 action = masked_q_values.argmax().item()
             else:
@@ -630,19 +644,26 @@ def optimize_model(
         tuple(not d for d in batch.done), dtype=torch.bool)
 
     device = policy_net.device
-    state_batch = torch.stack(batch.state).to(device)
+    # Convert all states in the batch to one-hot encoding
+    state_batch = torch.stack(
+        [state_to_one_hot(s.numpy(), device) for s in batch.state]
+    )
     action_batch = torch.tensor(
         batch.action, device=device).unsqueeze(1)  # [B, 1]
     reward_batch = torch.tensor(
         batch.reward, dtype=torch.float32, device=device)
 
     # Compute Q(s_t, a) - the Q-values for the actions taken
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    q_values = policy_net(state_batch)
+    state_action_values = q_values.gather(1, action_batch)
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
     next_state_values = torch.zeros(batch_size, device=device)
     non_final_next_states = torch.stack(
-        [s for s, done in zip(batch.next_state, batch.done) if not done]).to(device)
+        [state_to_one_hot(s.numpy(), device)
+         for s, done in zip(batch.next_state, batch.done)
+         if not done]
+    )
     if non_final_next_states.numel() > 0:
         with torch.no_grad():
             target_q_values = target_net(non_final_next_states)
@@ -650,7 +671,9 @@ def optimize_model(
             if use_masking:
                 # Generate and apply mask to target Q-values
                 next_states_mask_np = np.stack(
-                    [generate_legal_mask(s.cpu().numpy()) for s in non_final_next_states])
+                    [generate_legal_mask(s.cpu().numpy())
+                     for s, done in zip(batch.next_state, batch.done)
+                     if not done])
                 next_states_mask_tensor = torch.from_numpy(
                     next_states_mask_np).to(device)
 
@@ -780,10 +803,12 @@ def train(args):
     print(f"Using device: {args.device}")
 
     # 1. Initialize Environment, Networks, and Optimizer
-    env = SudokuEnv(puzzle_str=args.puzzle,
-                    reward_shaping=args.reward_shaping,
-                    fixed_puzzle=args.fixed_puzzle,
-                    block_wrong_moves=args.block_wrong_moves)
+    env = SudokuEnv(
+        puzzle_str=args.puzzle,
+        reward_shaping=args.reward_shaping,
+        fixed_puzzle=args.fixed_puzzle,
+        block_wrong_moves=args.block_wrong_moves,
+    )
 
     input_shape = env.observation_space.shape
     output_size = env.action_space.n  # 729
@@ -900,19 +925,17 @@ def train(args):
     for _t in range(81):  # Max 81 steps
         # In test mode, always exploit (no exploration), but use the same device
         with torch.no_grad():
-            state_tensor = torch.tensor(
-                state, dtype=torch.float32, device=args.device).unsqueeze(0)
-            q_values = policy_net(state_tensor)  # [1, 729]
+            one_hot_state = state_to_one_hot(state, args.device).unsqueeze(0)
+            q_values = policy_net(one_hot_state)  # [1, 729]
 
             if args.masking:
                 mask = generate_legal_mask(state)
-                mask_tensor = torch.from_numpy(mask).to(state_tensor.device)
-                additive_mask = torch.where(mask_tensor,
-                                            torch.tensor(
-                                                0.0, device=args.device),
-                                            torch.tensor(
-                                                ILLEGAL_ACTION_VALUE, device=args.device)
-                                            ).unsqueeze(0)
+                mask_tensor = torch.from_numpy(mask).to(args.device)
+                additive_mask = torch.where(
+                    mask_tensor,
+                    torch.tensor(0.0, device=args.device),
+                    torch.tensor(ILLEGAL_ACTION_VALUE, device=args.device)
+                ).unsqueeze(0)
                 masked_q_values = q_values + additive_mask
                 action = masked_q_values.argmax().item()
             else:
