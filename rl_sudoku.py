@@ -880,21 +880,44 @@ def prevent_sleep():
     return lambda: None  # Return a no-op function for other systems
 
 
-def curriculum_puzzle_clues(progress_ratio: float) -> int:
-    """Curriculum Learning - Select puzzle difficulty based on episodes progress."""
-    if progress_ratio < 0.25:
-        # Super easy puzzles to learn the basics
-        num_clues = random.randint(78, 80)
-    elif progress_ratio < 0.5:
-        # Easy puzzles
-        num_clues = random.randint(50, 78)
-    elif progress_ratio < 0.75:
-        # Medium difficulty puzzles
-        num_clues = random.randint(40, 55)
-    else:  # Final 40% of episodes: Hard
-        # Mix of hard-medium difficulties
-        num_clues = random.randint(25, 45)
+CURRICULUM_LEVELS = [
+    {"name": "Super Easy", "clues": (78, 80), "solve_rate_threshold": 0.9, "eval_window": 50},
+    {"name": "Easy", "clues": (50, 78), "solve_rate_threshold": 0.7, "eval_window": 100},
+    {"name": "Medium", "clues": (40, 55), "solve_rate_threshold": 0.5, "eval_window": 200},
+    {"name": "Hard", "clues": (25, 45), "solve_rate_threshold": None, "eval_window": None}, # Final level
+]
+
+
+def get_curriculum_puzzle_clues(curriculum_level: int) -> int:
+    """Select puzzle difficulty based on the current curriculum level."""
+    level_info = CURRICULUM_LEVELS[curriculum_level]
+    min_clues, max_clues = level_info["clues"]
+    num_clues = random.randint(min_clues, max_clues)
     return num_clues
+
+
+def check_curriculum_progress(
+    current_level: int,
+    recent_solves: deque
+) -> int:
+    """Check if the agent is ready to advance to the next curriculum level."""
+    if current_level >= len(CURRICULUM_LEVELS) - 1:
+        return current_level # Already at the highest level
+
+    level_info = CURRICULUM_LEVELS[current_level]
+    eval_window = level_info["eval_window"]
+    threshold = level_info["solve_rate_threshold"]
+
+    if len(recent_solves) >= eval_window:
+        solve_rate = sum(recent_solves) / len(recent_solves)
+        if solve_rate >= threshold:
+            print(
+                f"\n*** Curriculum Level Up! "
+                f"Passed '{level_info['name']}' "
+                f"with solve rate {solve_rate:.2f} >= {threshold:.2f} ***"
+            )
+            return current_level + 1
+    return current_level
 
 
 def train(args, env, policy_net, target_net, optimizer, memory) -> int:
@@ -908,21 +931,36 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
     # Training loop
     epoch_steps_done = 0
-    current_epsilon = args.eps_start
     best_reward = -float('inf')
     solved_count = 0
     # Track minimum clues for a solved puzzle (lower is harder)
     min_clues_solved = 99
 
-    print(f"Starting Training for {args.episodes} episodes...")
+    # Metadata for training state
+    total_episodes_trained = args.start_episode - 1
+    current_epsilon = args.current_epsilon
+    curriculum_level = args.curriculum_level
+    recent_solves = deque(maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+
+    print(
+        f"Starting Training "
+        f"at episode {args.start_episode} "
+        f"for {args.episodes} episodes, "
+        f"Curriculum Level: {CURRICULUM_LEVELS[curriculum_level]['name']}"
+    )
     start_time = time.time()
 
-    for i_episode in range(1, args.episodes + 1):
-        # 2. Reset the environment and get initial state
+    for i_episode in range(args.start_episode, args.start_episode + args.episodes):
+        final_episode = i_episode == args.start_episode + args.episodes - 1
 
-        # Curriculum Learning: Select puzzle difficulty based on episodes progress.
-        progress_ratio = i_episode / args.episodes
-        num_clues = curriculum_puzzle_clues(progress_ratio)
+        # 1. Adaptive Curriculum Learning
+        curriculum_level = check_curriculum_progress(curriculum_level, recent_solves)
+        if curriculum_level < len(CURRICULUM_LEVELS) -1 and len(recent_solves) == recent_solves.maxlen:
+            # Reset window for new level
+            recent_solves = deque(maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+
+        # 2. Reset the environment and get initial state
+        num_clues = get_curriculum_puzzle_clues(curriculum_level)
         reset_options = {"num_clues": num_clues}
         state, _info = env.reset(options=reset_options)
 
@@ -932,7 +970,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         episode_transitions = []  # Store transitions for this episode
 
         # 3. Run the episode
-        for step in range(81):  # Max 81 steps (cells) per episode
+        for _step in range(81):  # Max 81 steps (cells) per episode
             action, current_epsilon = get_action(
                 state,
                 policy_net,
@@ -965,11 +1003,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             # Also store for potential end-of-episode training
             episode_transitions.append(transition)
 
-            # Move to the next state
+            # 6. Move to the next state
             state = next_state
             episode_reward += reward
 
-            # 6. Perform optimization step
+            # 7. Perform optimization step
             transitions = memory.sample(args.batch_size)
             optimize_model(
                 policy_net, target_net, optimizer,
@@ -989,34 +1027,31 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # Typically not used in Sudoku, but good practice
                 break
 
-        # Hindsight Experience Replay (HER): After an episode finishes (win or lose),
+        recent_solves.append(1 if episode_solved else 0)
+        total_episodes_trained += 1
+
+        # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
         # perform an extra training pass on its full trajectory. This provides immediate
         # feedback on the outcome.
         if episode_transitions:
             # For successful episodes, this reinforces the good moves.
             # For failed episodes, this reinforces the penalties for bad moves.
-            # if episode_solved:
-            #     print(f"Episode {i_episode}: Solved! Performing hindsight training.")
-            # else:
-            #     print(f"Episode {i_episode}: Failed. Performing hindsight training.")
-
             optimize_model(
                 policy_net, target_net, optimizer,
                 episode_transitions,
                 args.gamma, args.masking
             )
 
-        # 7. Update the target network periodically
+        # 9. Update the target network periodically
         if i_episode % args.target_update == 0:
             target_net.load_state_dict(policy_net.state_dict())
 
-        # 8. Logging and Reporting
+        # 10. Logging and Reporting
         best_reward_str = ""
         if best_reward == -float('inf') or episode_reward > best_reward:
             # if best_reward != -float('inf'):
             best_reward_str = " (New Best Reward)"
             best_reward = episode_reward
-            # TODO: (when needed) Save model checkpoint here
 
         if episode_solved or best_reward_str or i_episode % args.log_episodes == 0:
             # if not env.fixed_puzzle:
@@ -1030,7 +1065,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 f"/B:{stats['completed_boxes']}"
 
             print(
-                f"Episode {i_episode:6d} of {args.episodes:6d}: "
+                f"Episode {i_episode:6d}: "
+                f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
                 f"Steps: {episode_steps:3d}, "
                 f"Epoch Steps: {epoch_steps_done:6d}, "
                 f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
@@ -1038,6 +1074,19 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                 f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
             )
+
+        # 11. Save the model periodically or at the end of training
+        if args.save_model and (best_reward_str or final_episode):
+            model_str = 'final model' if final_episode else 'model checkpoint'
+            print(f"Saving {model_str} to {args.save_model}...")
+            torch.save({
+                'model_state_dict': policy_net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'total_episodes_trained': total_episodes_trained,
+                'curriculum_level': curriculum_level,
+                'current_epsilon': current_epsilon,
+            }, args.save_model)
+
 
     end_time = time.time()
     training_duration = end_time - start_time
@@ -1049,7 +1098,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         if min_clues_solved != 99 else ""
     print("\n" + "\n  ".join([
         f"Training Complete {'='*60}",
-        f"Final Best Reward: {best_reward:.2f} over {args.episodes} episodes.",
+        f"Final Best Reward: {best_reward:.2f} over {total_episodes_trained} total episodes.",
         f"Total Solved: {solved_count}{difficulty_summary}",
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
@@ -1065,7 +1114,7 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
         print("Initial Puzzle:")
         print(SudokuEnv.format_grid_to_string(env.current_grid))
 
-    for step in range(81):  # Max 81 steps
+    for _step in range(81):  # Max 81 steps
         with torch.no_grad():
             one_hot_state = state_to_one_hot(state, args.device).unsqueeze(0)
             q_values = policy_net(one_hot_state)
@@ -1189,9 +1238,31 @@ def main() -> int:
 
     # Load a pre-trained model if specified
     if args.load_model:
-        print(f"Loading model from {args.load_model}...")
-        # TODO: (when needed) Add error handling for file not found
-        policy_net.load_state_dict(torch.load(args.load_model))
+        try:
+            print(f"Loading model and metadata from {args.load_model}...")
+            checkpoint = torch.load(args.load_model, map_location=args.device)
+            policy_net.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+            # Load metadata to continue training state
+            total_episodes_trained = checkpoint.get('total_episodes_trained', 0)
+            args.start_episode = total_episodes_trained + 1
+            args.curriculum_level = checkpoint.get('curriculum_level', 0)
+            args.current_epsilon = checkpoint.get('current_epsilon', args.eps_start)
+
+            print(f"Resuming training from episode {args.start_episode}.")
+            print(f"Loaded curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
+            print(f"Loaded epsilon: {args.current_epsilon:.4f}.")
+
+        except FileNotFoundError:
+            print(f"Error: Model file not found at {args.load_model}. Starting from scratch.")
+            args.start_episode = 1
+            args.curriculum_level = 0
+            args.current_epsilon = args.eps_start
+    else:
+        args.start_episode = 1
+        args.curriculum_level = 0
+        args.current_epsilon = args.eps_start
 
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()  # Target network is always in evaluation mode
@@ -1203,13 +1274,9 @@ def main() -> int:
     try:
         # Run training if episodes are specified
         if args.episodes > 0:
+            # train is responsible for args.save_model (checkpoint and final)
             rc = train(args, env, policy_net, target_net, optimizer, memory)
         if not rc:
-            # Save the model if a path is provided
-            if args.save_model:
-                print(f"Saving model to {args.save_model}...")
-                torch.save(policy_net.state_dict(), args.save_model)
-
             # Run the test phase if specified
             if args.test_games > 0:
                 rc = test(args, env, policy_net)
