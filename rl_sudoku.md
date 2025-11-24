@@ -174,3 +174,9 @@ Our implementation of HER works as follows:
    * For a **failed episode**, this reinforces the penalties for the incorrect moves that led to a dead end.
 
 This approach provides immediate, contextual feedback to the agent, helping it learn much more quickly which sequences of actions are promising and which are not, rather than waiting for those transitions to be randomly sampled from the buffer over time.
+
+### Residual Connections for Deeper Networks
+
+As the network gets deeper to capture more complex relationships across the Sudoku grid, it can become harder to train due to issues like the vanishing gradient problem. To combat this, we can introduce **Residual Connections** (or skip connections), a core concept from Residual Networks (ResNets).
+
+A residual block allows the network to bypass one or more layers, simply passing the input through. This makes it easier for gradients to flow during backpropagation and allows the model to learn an "identity" function if a block of layers is not useful. For Sudoku, this means we can build a deeper, more powerful CNN that can better integrate local (3x3 box) and global (full grid) information without sacrificing training stability.

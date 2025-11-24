@@ -48,6 +48,8 @@
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
+                "--load_model", "model_in_training.rewardshaping.zip",
+                "--save_model", "model_in_training.rewardshaping.zip",
                 "--episodes", "200",
                 "--reward_shaping",
                 "--test_games", "10", "--test_difficulty_min", "6", "--test_difficulty_max", "61",
@@ -61,6 +63,8 @@
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
+                "--load_model", "model_in_training.masking.zip",
+                "--save_model", "model_in_training.masking.zip",
                 "--episodes", "200",
                 "--masking",
                 "--test_games", "10", "--test_difficulty_min", "6", "--test_difficulty_max", "61",
@@ -74,7 +78,8 @@
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
-                "--save_model", "model_in_training.xyz",
+                "--load_model", "model_in_training.masking+rewardshaping.zip",
+                "--save_model", "model_in_training.masking+rewardshaping.zip",
                 "--episodes", "100",
                 "--masking",
                 "--reward_shaping",
@@ -89,6 +94,8 @@
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
+                "--load_model", "model_in_training.masking+rewardshaping.zip",
+                "--save_model", "model_in_training.masking+rewardshaping.zip",
                 "--episodes", "400",
                 "--masking",
                 "--reward_shaping",
@@ -98,12 +105,14 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 10000 --masking --reward_shaping",
+            "name": "Python: RL sudoku 1000 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
             "args": [
-                "--episodes", "10000",
+                "--load_model", "model_in_training.masking+rewardshaping.zip",
+                "--save_model", "model_in_training.masking+rewardshaping.zip",
+                "--episodes", "1000",
                 "--masking",
                 "--reward_shaping",
                 "--test_games", "10", "--test_difficulty_min", "6", "--test_difficulty_max", "61",

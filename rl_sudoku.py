@@ -43,12 +43,12 @@ import torch.optim as optim
 # Default Hyperparameters & Epsilon-greedy params (all can be changed from command line):
 GAMMA = 0.99
 EPS_START = 1.0
-EPS_END = 0.01
-EPS_DECAY = 0.99995
-TARGET_UPDATE = 50  # Frequency (in episodes) to update the target network
+EPS_END = 0.05  # A slightly higher floor can encourage exploration on harder puzzles
+EPS_DECAY = 0.9995  # Faster decay to encourage exploitation sooner
+TARGET_UPDATE = 10  # Frequency (in episodes) to update the target network
 MEMORY_CAPACITY = 10000
-BATCH_SIZE = 64
-LR = 0.0001
+BATCH_SIZE = 128 # Larger batch size can stabilize training
+LR = 0.00025 # Slightly higher learning rate
 MAX_EPISODES = 50000
 WEIGHT_DECAY = 0.01
 
@@ -574,6 +574,26 @@ class ReplayBuffer:
         return len(self.memory)
 
 
+class ResidualBlock(nn.Module):
+    """A residual block with two convolutional layers."""
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(
+            out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+    def forward(self, x):
+        residual = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return self.relu(out + residual)
+
+
 class DQNSolver(nn.Module):
     """
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
@@ -585,17 +605,18 @@ class DQNSolver(nn.Module):
 
         # TODO: (when needed) Implement tying _input_shape to the CNN input shape.
 
-        # Use CNN to capture local structure (rows, columns, 3x3 boxes)
-        self.conv = nn.Sequential(
-            # 1. First Conv: 10 input channel (one-hot encoded tensor), 64 output channels
-            nn.Conv2d(10, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            # 2. Second Conv
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            # 3. Third Conv
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
+        # Initial convolution to get to the desired channel dimension
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(10, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
+        )
+
+        # Stack of residual blocks to deepen the network effectively
+        self.residual_tower = nn.Sequential(
+            ResidualBlock(128, 128),
+            ResidualBlock(128, 128),
+            ResidualBlock(128, 128),
         )
 
         # Calculate the size after convolutional layers (9x9 grid remains 9x9 with padding=1, k=3)
@@ -617,7 +638,8 @@ class DQNSolver(nn.Module):
         # Input is already a one-hot tensor
         x = x.to(self.device)
 
-        x = self.conv(x)
+        x = self.initial_conv(x)
+        x = self.residual_tower(x)
         x = x.view(x.size(0), -1)  # Flatten the tensor
         q_values = self.fc(x)
         return q_values
