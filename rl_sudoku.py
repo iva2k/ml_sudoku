@@ -222,24 +222,71 @@ def check_move_validity(grid: np.ndarray, r: int, c: int, num: int) -> bool:
     return True
 
 
-def generate_legal_mask(grid):
+def generate_legal_mask(grid: np.ndarray) -> np.ndarray:
     """
-    STRICT MASKING:
-    Generates a boolean mask of size 729.
-    True if:
-    1. The cell is currently empty (0).
-    2. Placing the digit is VALID according to Sudoku rules.
+    Optimized STRICT MASKING (CPU version). Generates a boolean mask of size 729.
+    An action is legal (True) if it places a valid digit in an empty cell.
+    This version uses Python sets for fast lookups and is highly efficient on the CPU.
     """
     mask = np.zeros(9 * 9 * 9, dtype=bool)
+
+    # 1. Pre-compute sets of used numbers for all rows, cols, and boxes for O(1) lookups.
+    rows = [set(grid[r, :]) - {0} for r in range(9)]
+    cols = [set(grid[:, c]) - {0} for c in range(9)]
+    boxes = [[set() for _ in range(3)] for _ in range(3)]
     for r in range(9):
         for c in range(9):
-            if grid[r, c] == 0:
-                # This cell is empty, check which digits are valid
-                for d in range(1, 10):
-                    if check_move_validity(grid, r, c, d):
-                        action_idx = action_encode(r, c, d)
-                        mask[action_idx] = True
+            if grid[r, c] != 0:
+                boxes[r // 3][c // 3].add(grid[r, c])
+
+    all_digits = set(range(1, 10))
+
+    # 2. Iterate only through empty cells to find valid moves.
+    empty_cells1 = np.argwhere(grid == 0)
+    empty_cells = np.transpose(np.nonzero(grid == 0))
+    for r, c in empty_cells:
+        # Find used digits for this specific cell using fast set unions
+        used_digits = rows[r] | cols[c] | boxes[r // 3][c // 3]
+        valid_digits = all_digits - used_digits
+
+        for d in valid_digits:
+            action_idx = action_encode(r, c, d)
+            mask[action_idx] = True
+
     return mask
+
+
+def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Experimental GPU-accelerated version of generate_legal_mask.
+    This function performs the same logic using parallel tensor operations on the GPU.
+    """
+    device = grid_tensor.device
+    
+    # 1. Create a (9, 9, 9) tensor where `used_digits[r, c, d-1]` is true if digit `d` is used
+    # in the row, column, or box corresponding to cell (r, c).
+    
+    # One-hot encode the grid: (9, 9, 10) -> (9, 9, 9) for digits 1-9
+    one_hot = torch.nn.functional.one_hot(grid_tensor.long(), num_classes=10)[:, :, 1:].bool()
+
+    # Row and column used digits: (9, 9) booleans for each digit
+    row_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1)
+    col_used = one_hot.any(dim=0, keepdim=True).expand(9, -1, -1)
+
+    # Box used digits: Reshape and check
+    box_used = one_hot.view(3, 3, 3, 3, 9).any(dim=(1, 3), keepdim=True)
+    box_used = box_used.expand(3, 3, 3, 3, 9).reshape(9, 9, 9)
+
+    # Combine all used digits. `used_mask[r, c, d-1]` is true if d is NOT a valid digit for (r,c)
+    used_mask = row_used | col_used | box_used
+
+    # 2. Create a mask for empty cells. `empty_mask[r, c]` is true if the cell is empty.
+    empty_mask = (grid_tensor == 0)
+
+    # 3. The final legal mask is where a cell is empty AND the digit is NOT used.
+    # We expand empty_mask to match the shape of used_mask.
+    legal_mask_3d = empty_mask.unsqueeze(2) & ~used_mask
+    return legal_mask_3d.view(-1) # Flatten to 729
 
 
 def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
@@ -688,6 +735,7 @@ def get_action(
 
     mask = None
     if use_masking:
+        # Here state is always numpy
         mask = generate_legal_mask(state)
 
     if random.random() < current_epsilon:
@@ -782,8 +830,8 @@ def optimize_model(
 
             if use_masking:
                 # Generate and apply mask to target Q-values
-                masks_np = np.stack([generate_legal_mask(s.cpu())
-                                    for s in non_final_next_states_np])
+                # Using CPU version here for simplicity as it involves a list comprehension
+                masks_np = np.stack([generate_legal_mask(s.cpu().numpy()) for s in non_final_next_states_np])
                 masks_t = torch.from_numpy(masks_np).to(device)
 
                 target_q_values[~masks_t] = ILLEGAL_ACTION_VALUE
@@ -1159,7 +1207,8 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             q_values = policy_net(one_hot_state)
 
             if args.masking:
-                mask = generate_legal_mask(state)
+                # During testing, state is a numpy array, so we use the CPU version.
+                mask = generate_legal_mask(state) 
                 if not np.any(mask):
                     break  # No legal moves left
                 mask_tensor = torch.from_numpy(mask).to(args.device)
