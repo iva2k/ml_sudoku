@@ -47,8 +47,8 @@ EPS_END = 0.05  # A slightly higher floor can encourage exploration on harder pu
 EPS_DECAY = 0.9997  # Faster decay to encourage exploitation sooner
 TARGET_UPDATE = 10  # Frequency (in episodes) to update the target network
 MEMORY_CAPACITY = 10000
-BATCH_SIZE = 128 # Larger batch size can stabilize training
-LR = 0.00025 # Slightly higher learning rate
+BATCH_SIZE = 128  # Larger batch size can stabilize training
+LR = 0.00025  # Slightly higher learning rate
 MAX_EPISODES = 50000
 WEIGHT_DECAY = 0.01
 
@@ -204,19 +204,41 @@ def action_decode(action):
     return row, col, digit
 
 
+def check_move_validity(grid: np.ndarray, r: int, c: int, num: int) -> bool:
+    """
+    Fast Numba-friendly style check for Sudoku validity.
+    Returns True if placing 'num' at (r, c) does not violate row/col/box rules.
+    """
+    # Check row
+    if num in grid[r, :]:
+        return False
+    # Check column
+    if num in grid[:, c]:
+        return False
+    # Check 3x3 box
+    box_r, box_c = 3 * (r // 3), 3 * (c // 3)
+    if num in grid[box_r:box_r + 3, box_c:box_c + 3]:
+        return False
+    return True
+
+
 def generate_legal_mask(grid):
     """
-    Generates a boolean mask of size 729 marking legal actions. True indicates a legal action: 
-    placing any digit (1-9) in a blank cell (value 0).
+    STRICT MASKING:
+    Generates a boolean mask of size 729.
+    True if:
+    1. The cell is currently empty (0).
+    2. Placing the digit is VALID according to Sudoku rules.
     """
     mask = np.zeros(9 * 9 * 9, dtype=bool)
     for r in range(9):
         for c in range(9):
-            # An action is only legal if the target cell is currently blank
             if grid[r, c] == 0:
+                # This cell is empty, check which digits are valid
                 for d in range(1, 10):
-                    action_idx = action_encode(r, c, d)
-                    mask[action_idx] = True
+                    if check_move_validity(grid, r, c, d):
+                        action_idx = action_encode(r, c, d)
+                        mask[action_idx] = True
     return mask
 
 
@@ -588,6 +610,7 @@ class ResidualBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
+        """Forward pass through the residual block."""
         residual = x
         out = self.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
@@ -605,28 +628,30 @@ class DQNSolver(nn.Module):
 
         # TODO: (when needed) Implement tying _input_shape to the CNN input shape.
 
-        # Initial convolution to get to the desired channel dimension
-        self.initial_conv = nn.Sequential(
-            nn.Conv2d(10, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True)
-        )
-
-        # Stack of residual blocks to deepen the network effectively
-        self.residual_tower = nn.Sequential(
-            ResidualBlock(128, 128),
-            ResidualBlock(128, 128),
-            ResidualBlock(128, 128),
-        )
-
         # Calculate the size after convolutional layers (9x9 grid remains 9x9 with padding=1, k=3)
         # 128 channels * 9 rows * 9 cols = 10368
         self.flattened_size = 128 * 9 * 9
 
-        # Fully Connected Layers (DNN head)
-        self.fc = nn.Sequential(
+        self.net = nn.Sequential(
+            # Initial convolution to get to the desired channel dimension
+            nn.Conv2d(10, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            # Stack of residual blocks to deepen the network effectively
+            ResidualBlock(128, 128),
+            ResidualBlock(128, 128),
+            ResidualBlock(128, 128),
+
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+
+            nn.Flatten(),
+
+            # Fully Connected Layers (DNN head)
             nn.Linear(self.flattened_size, 1024),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(1024, output_size)  # Final output is 729 Q-values
         )
 
@@ -638,10 +663,7 @@ class DQNSolver(nn.Module):
         # Input is already a one-hot tensor
         x = x.to(self.device)
 
-        x = self.initial_conv(x)
-        x = self.residual_tower(x)
-        x = x.view(x.size(0), -1)  # Flatten the tensor
-        q_values = self.fc(x)
+        q_values = self.net(x)
         return q_values
 
 
@@ -676,8 +698,7 @@ def get_action(
             if len(legal_actions) == 0:
                 # No legal moves are possible (board is full). Signal to terminate.
                 return None, new_epsilon
-            else:
-                action = random.choice(legal_actions)
+            action = random.choice(legal_actions)
         else:
             action = action_space.sample()
     else:
@@ -691,18 +712,14 @@ def get_action(
             if use_masking:
                 # Apply mask: set Q-values of illegal actions to a very small number
                 # Create a mask with 0 for legal actions and a large negative value for illegal ones
-                mask_tensor = torch.from_numpy(mask).to(policy_net.device)
-                additive_mask = torch.where(
-                    mask_tensor,
-                    torch.tensor(0.0, device=policy_net.device),
-                    torch.tensor(ILLEGAL_ACTION_VALUE,
-                                 device=policy_net.device)
-                ).unsqueeze(0)
-                masked_q_values = q_values + additive_mask
-                action = masked_q_values.argmax().item()
+                mask_t = torch.from_numpy(mask).to(
+                    policy_net.device).unsqueeze(0)
+                masked_q = q_values.clone()
+                masked_q[~mask_t] = ILLEGAL_ACTION_VALUE
+                action = masked_q.argmax().item()
             else:
                 # Use argmax to get the best action index
-                action = q_values.argmax().item()
+                action = q_values.argmax(dim=1).item()
 
     return action, new_epsilon
 
@@ -755,30 +772,23 @@ def optimize_model(
 
     # Only proceed if there are non-final states
     if non_final_mask.any():
-        non_final_next_states = torch.stack(
-            [state_to_one_hot(s.numpy(), device)
-             for s, done in zip(batch.next_state, batch.done)
-             if not done]
-        )
+        non_final_next_states_np = [s for s, done in zip(
+            batch.next_state, batch.done) if not done]
+        non_final_next_states_t = torch.stack(
+            [state_to_one_hot(s.numpy(), device) for s in non_final_next_states_np])
+
         with torch.no_grad():
-            target_q_values = target_net(non_final_next_states)
+            target_q_values = target_net(non_final_next_states_t)
 
             if use_masking:
                 # Generate and apply mask to target Q-values
-                next_states_mask_np = np.stack(
-                    [generate_legal_mask(s.cpu().numpy())
-                     for s, done in zip(batch.next_state, batch.done)
-                     if not done])
-                next_states_mask_tensor = torch.from_numpy(
-                    next_states_mask_np).to(device)
+                masks_np = np.stack([generate_legal_mask(s.cpu())
+                                    for s in non_final_next_states_np])
+                masks_t = torch.from_numpy(masks_np).to(device)
 
-                # Create a mask with 0 for legal actions and a large negative value for illegal ones
-                additive_mask = torch.where(next_states_mask_tensor, torch.tensor(
-                    0.0, device=device), torch.tensor(ILLEGAL_ACTION_VALUE, device=device))
-                masked_q_values = target_q_values + additive_mask
-
+                target_q_values[~masks_t] = ILLEGAL_ACTION_VALUE
                 # Take the max over the masked Q-values
-                next_state_values[non_final_mask] = masked_q_values.max(1)[
+                next_state_values[non_final_mask] = target_q_values.max(1)[
                     0].detach()
             else:
                 # Use standard max Q-value
@@ -798,7 +808,8 @@ def optimize_model(
     optimizer.zero_grad()
     loss.backward()
     # Gradient clipping (optional but recommended for stability)
-    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
+    # torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
+    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
     optimizer.step()
 
 
@@ -903,10 +914,14 @@ def prevent_sleep():
 
 
 CURRICULUM_LEVELS = [
-    {"name": "Super Easy", "clues": (78, 80), "solve_rate_threshold": 0.9, "eval_window": 50},
-    {"name": "Easy", "clues": (50, 78), "solve_rate_threshold": 0.7, "eval_window": 100},
-    {"name": "Medium", "clues": (40, 55), "solve_rate_threshold": 0.5, "eval_window": 200},
-    {"name": "Hard", "clues": (25, 45), "solve_rate_threshold": None, "eval_window": None}, # Final level
+    {"name": "Super Easy", "clues": (
+        78, 80), "solve_rate_threshold": 0.9, "eval_window": 50},
+    {"name": "Easy", "clues": (
+        50, 78), "solve_rate_threshold": 0.7, "eval_window": 100},
+    {"name": "Medium", "clues": (
+        40, 55), "solve_rate_threshold": 0.5, "eval_window": 200},
+    {"name": "Hard", "clues": (
+        25, 45), "solve_rate_threshold": None, "eval_window": None},  # Final level
 ]
 
 
@@ -924,7 +939,7 @@ def check_curriculum_progress(
 ) -> int:
     """Check if the agent is ready to advance to the next curriculum level."""
     if current_level >= len(CURRICULUM_LEVELS) - 1:
-        return current_level # Already at the highest level
+        return current_level  # Already at the highest level
 
     level_info = CURRICULUM_LEVELS[current_level]
     eval_window = level_info["eval_window"]
@@ -962,7 +977,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     total_episodes_trained = args.start_episode - 1
     current_epsilon = args.current_epsilon
     curriculum_level = args.curriculum_level
-    recent_solves = deque(maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+    recent_solves = deque(
+        maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
     print(
         f"Starting Training "
@@ -976,10 +992,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         final_episode = i_episode == args.start_episode + args.episodes - 1
 
         # 1. Adaptive Curriculum Learning
-        curriculum_level = check_curriculum_progress(curriculum_level, recent_solves)
-        if curriculum_level < len(CURRICULUM_LEVELS) -1 and len(recent_solves) == recent_solves.maxlen:
+        curriculum_level = check_curriculum_progress(
+            curriculum_level, recent_solves)
+        if curriculum_level < len(CURRICULUM_LEVELS) - 1 and len(recent_solves) == recent_solves.maxlen:
             # Reset window for new level
-            recent_solves = deque(maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+            recent_solves = deque(
+                maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
         # 2. Reset the environment and get initial state
         num_clues = get_curriculum_puzzle_clues(curriculum_level)
@@ -1108,7 +1126,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 'curriculum_level': curriculum_level,
                 'current_epsilon': current_epsilon,
             }, args.save_model)
-
 
     end_time = time.time()
     training_duration = end_time - start_time
@@ -1267,17 +1284,21 @@ def main() -> int:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
             # Load metadata to continue training state
-            total_episodes_trained = checkpoint.get('total_episodes_trained', 0)
+            total_episodes_trained = checkpoint.get(
+                'total_episodes_trained', 0)
             args.start_episode = total_episodes_trained + 1
             args.curriculum_level = checkpoint.get('curriculum_level', 0)
-            args.current_epsilon = checkpoint.get('current_epsilon', args.eps_start)
+            args.current_epsilon = checkpoint.get(
+                'current_epsilon', args.eps_start)
 
             print(f"Resuming training from episode {args.start_episode}.")
-            print(f"Loaded curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
+            print(
+                f"Loaded curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
             print(f"Loaded epsilon: {args.current_epsilon:.4f}.")
 
         except FileNotFoundError:
-            print(f"Error: Model file not found at {args.load_model}. Starting from scratch.")
+            print(
+                f"Error: Model file not found at {args.load_model}. Starting from scratch.")
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
