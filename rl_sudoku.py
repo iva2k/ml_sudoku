@@ -242,8 +242,7 @@ def generate_legal_mask(grid: np.ndarray) -> np.ndarray:
     all_digits = set(range(1, 10))
 
     # 2. Iterate only through empty cells to find valid moves.
-    empty_cells1 = np.argwhere(grid == 0)
-    empty_cells = np.transpose(np.nonzero(grid == 0))
+    empty_cells = np.argwhere(grid == 0)
     for r, c in empty_cells:
         # Find used digits for this specific cell using fast set unions
         used_digits = rows[r] | cols[c] | boxes[r // 3][c // 3]
@@ -261,13 +260,14 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     Experimental GPU-accelerated version of generate_legal_mask.
     This function performs the same logic using parallel tensor operations on the GPU.
     """
-    device = grid_tensor.device
-    
+    _device = grid_tensor.device
+
     # 1. Create a (9, 9, 9) tensor where `used_digits[r, c, d-1]` is true if digit `d` is used
     # in the row, column, or box corresponding to cell (r, c).
-    
+
     # One-hot encode the grid: (9, 9, 10) -> (9, 9, 9) for digits 1-9
-    one_hot = torch.nn.functional.one_hot(grid_tensor.long(), num_classes=10)[:, :, 1:].bool()
+    one_hot = torch.nn.functional.one_hot(
+        grid_tensor.long(), num_classes=10)[:, :, 1:].bool()
 
     # Row and column used digits: (9, 9) booleans for each digit
     row_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1)
@@ -281,12 +281,12 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     used_mask = row_used | col_used | box_used
 
     # 2. Create a mask for empty cells. `empty_mask[r, c]` is true if the cell is empty.
-    empty_mask = (grid_tensor == 0)
+    empty_mask = grid_tensor == 0
 
     # 3. The final legal mask is where a cell is empty AND the digit is NOT used.
     # We expand empty_mask to match the shape of used_mask.
     legal_mask_3d = empty_mask.unsqueeze(2) & ~used_mask
-    return legal_mask_3d.view(-1) # Flatten to 729
+    return legal_mask_3d.view(-1)  # Flatten to 729
 
 
 def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
@@ -664,7 +664,7 @@ class ResidualBlock(nn.Module):
         return self.relu(out + residual)
 
 
-class DQNSolver(nn.Module):
+class DQNSolver1(nn.Module):
     """
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
     """
@@ -712,6 +712,176 @@ class DQNSolver(nn.Module):
 
         q_values = self.net(x)
         return q_values
+
+
+class SudokuConstraintConv(nn.Module):
+    """
+    A custom layer that respects Sudoku geometry.
+    It computes features for:
+    1. Entire Rows (1x9)
+    2. Entire Cols (9x1)
+    3. Entire Boxes (3x3 non-overlapping)
+    And broadcasts them back to the grid cells.
+    """
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        # 1x9 convolution finds row patterns
+        self.row_conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size=(1, 9))
+        # 9x1 convolution finds column patterns
+        self.col_conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size=(9, 1))
+        # 3x3 stride 3 convolution finds box patterns (non-overlapping tiling)
+        self.box_conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size=3, stride=3)
+
+        self.bn = nn.BatchNorm2d(out_channels * 3)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        """Forward pass."""
+        # x: (B, C, 9, 9)
+
+        # 1. Row Features: (B, Out, 9, 1)
+        r = self.row_conv(x)
+        # Expand back to (B, Out, 9, 9) by repeating across columns
+        r = r.expand(-1, -1, -1, 9)
+
+        # 2. Col Features: (B, Out, 1, 9)
+        c = self.col_conv(x)
+        # Expand back to (B, Out, 9, 9) by repeating across rows
+        c = c.expand(-1, -1, 9, -1)
+
+        # 3. Box Features: (B, Out, 3, 3)
+        b = self.box_conv(x)
+        # Expand back to (B, Out, 9, 9) by tiling 3x3 blocks
+        b = b.repeat_interleave(3, dim=2).repeat_interleave(3, dim=3)
+
+        # Concatenate all features: (B, Out*3, 9, 9)
+        out = torch.cat([r, c, b], dim=1)
+        return self.relu(self.bn(out))
+
+
+class DQNSolver2(nn.Module):
+    """
+    The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
+    """
+
+    def __init__(self, _input_shape, output_size, device=None):
+        super().__init__()
+        self.device = device
+
+        # 1. First Pass: Extract geometric constraints
+        # Input: 10 channels (one-hot digits)
+        self.constraint_conv = SudokuConstraintConv(10, 64)
+
+        # 2. Mixing Layer: 1x1 conv to combine row/col/box info per pixel
+        # Input channels = 64 * 3 = 192
+        self.mix_conv = nn.Sequential(
+            nn.Conv2d(192, 128, kernel_size=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
+        )
+
+        # 3. Second Pass: Deepen reasoning on mixed features
+        self.constraint_conv2 = SudokuConstraintConv(128, 64)
+
+        # 4. Final Head
+        # Input channels = 64 * 3 = 192
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(192 * 9 * 9, 1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, output_size)
+        )
+
+    def forward(self, x):
+        """Forward pass."""
+        x = self.constraint_conv(x)
+        x = self.mix_conv(x)
+        x = self.constraint_conv2(x)
+        return self.fc(x)
+
+
+class ReasoningBlock(nn.Module):
+    """
+    A logical processing unit for each cell.
+    Uses 1x1 convolutions to act as a per-pixel Dense Neural Network.
+    This allows the model to learn complex exclusions like:
+    "If Row has 1 AND Col has 2, then I cannot be 1 or 2."
+    """
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        """Forward pass."""
+        residual = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return self.relu(out + residual)
+
+
+class DQNSolver(nn.Module):
+    """
+    The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
+    """
+    def __init__(self, _input_shape, output_size, device=None):
+        super().__init__()
+        self.device = device
+
+        # 1. Perception: Extract geometric constraints
+        # Input: 10 channels (one-hot digits)
+        # Output: 64 features per Row/Col/Box -> 192 total
+        self.constraint_conv = SudokuConstraintConv(10, 64)
+
+        # 2. Reasoning: Deep per-pixel logic (1x1 Convolutions)
+        # We first reduce dimensions to make reasoning efficient
+        self.reduce = nn.Sequential(
+            nn.Conv2d(192, 128, kernel_size=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
+        )
+
+        # Stack of reasoning blocks (Thinking time)
+        self.reasoning = nn.Sequential(
+            ReasoningBlock(128),
+            ReasoningBlock(128),
+            ReasoningBlock(128)
+        )
+
+        # 3. Second Pass: Re-evaluate constraints based on reasoning features
+        # This helps propagate complex dependencies
+        self.constraint_conv2 = SudokuConstraintConv(128, 64)
+
+        # 4. Final Decision
+        # Input channels = 64 * 3 (from conv2) = 192
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(192 * 9 * 9, 1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, output_size)
+        )
+
+    def forward(self, x):
+        """Forward pass."""
+        # Stage 1: See constraints
+        x = self.constraint_conv(x)
+
+        # Stage 2: Think about exclusions (per cell)
+        x = self.reduce(x)
+        x = self.reasoning(x)
+
+        # Stage 3: Re-check context
+        x = self.constraint_conv2(x)
+
+        # Stage 4: Act
+        return self.fc(x)
 
 
 def get_action(
@@ -831,7 +1001,8 @@ def optimize_model(
             if use_masking:
                 # Generate and apply mask to target Q-values
                 # Using CPU version here for simplicity as it involves a list comprehension
-                masks_np = np.stack([generate_legal_mask(s.cpu().numpy()) for s in non_final_next_states_np])
+                masks_np = np.stack([generate_legal_mask(s.cpu().numpy())
+                                    for s in non_final_next_states_np])
                 masks_t = torch.from_numpy(masks_np).to(device)
 
                 target_q_values[~masks_t] = ILLEGAL_ACTION_VALUE
@@ -1208,7 +1379,7 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
 
             if args.masking:
                 # During testing, state is a numpy array, so we use the CPU version.
-                mask = generate_legal_mask(state) 
+                mask = generate_legal_mask(state)
                 if not np.any(mask):
                     break  # No legal moves left
                 mask_tensor = torch.from_numpy(mask).to(args.device)
