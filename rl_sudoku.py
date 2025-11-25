@@ -44,7 +44,7 @@ import torch.optim as optim
 GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.05  # A slightly higher floor can encourage exploration on harder puzzles
-EPS_DECAY = 0.9995  # Faster decay to encourage exploitation sooner
+EPS_DECAY = 0.9997  # Faster decay to encourage exploitation sooner
 TARGET_UPDATE = 10  # Frequency (in episodes) to update the target network
 MEMORY_CAPACITY = 10000
 BATCH_SIZE = 128 # Larger batch size can stabilize training
@@ -662,7 +662,7 @@ def get_action(
     current_epsilon = max(eps_end, epsilon)
 
     # Epsilon decay
-    new_epsilon = epsilon * eps_decay
+    new_epsilon = max(eps_end, epsilon * eps_decay)
 
     mask = None
     if use_masking:
@@ -825,8 +825,8 @@ def parse_args():
                         help='Learning rate for the optimizer.')
     parser.add_argument('--gamma', type=float, default=GAMMA,
                         help='Discount factor for future rewards.')
-    parser.add_argument('--batch_size', type=int,
-                        default=BATCH_SIZE, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
+                        help='Batch size for training.')
     parser.add_argument('--memory_capacity', type=int,
                         default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
     parser.add_argument('--target_update', type=int, default=TARGET_UPDATE,
@@ -836,13 +836,13 @@ def parse_args():
     # Epsilon-greedy arguments
     parser.add_argument('--eps_start', type=float, default=EPS_START,
                         help='Starting value of epsilon for exploration.')
-    parser.add_argument('--eps_end', type=float,
-                        default=EPS_END, help='Minimum value of epsilon.')
-    parser.add_argument('--eps_decay', type=float,
-                        default=EPS_DECAY, help='Decay rate for epsilon.')
+    parser.add_argument('--eps_end', type=float, default=EPS_END,
+                        help='Minimum value of epsilon.')
+    parser.add_argument('--eps_decay', type=float, default=EPS_DECAY,
+                        help='Decay rate for epsilon.')
 
-    parser.add_argument('--log_episodes', type=int,
-                        default=10, help='Log info once every N episodes.')
+    parser.add_argument('--log_episodes', type=int, default=10,
+                        help='Log info once every N episodes.')
 
     # Testing arguments
     parser.add_argument('--test_games', type=int, default=10,
@@ -852,10 +852,10 @@ def parse_args():
     parser.add_argument('--test_difficulty_max', type=int, default=61,
                         help='Max blank cells for test puzzles.')
     # Model persistence
-    parser.add_argument('--save_model', type=str,
-                        default=None, help='Path to save the trained model.')
-    parser.add_argument('--load_model', type=str,
-                        default=None, help='Path to load a pre-trained model.')
+    parser.add_argument('--save_model', type=str, default=None,
+                        help='Path to save the trained model.')
+    parser.add_argument('--load_model', type=str, default=None,
+                        help='Path to load a pre-trained model.')
 
     args = parser.parse_args()
 
