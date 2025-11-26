@@ -1081,6 +1081,9 @@ def parse_args():
                         help='Min blank cells for test puzzles.')
     parser.add_argument('--test_difficulty_max', type=int, default=61,
                         help='Max blank cells for test puzzles.')
+    parser.add_argument('--show_boards', action='store_true',
+                        help='Show test puzzles and solutions.')
+
     # Model persistence
     parser.add_argument('--save_model', type=str, default=None,
                         help='Path to save the trained model.')
@@ -1368,9 +1371,6 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
     state = initial_state
     episode_steps = 0
     episode_reward = 0
-    if show_boards:
-        print("Initial Puzzle:")
-        print(SudokuEnv.format_grid_to_string(env.current_grid))
 
     for _step in range(81):  # Max 81 steps
         with torch.no_grad():
@@ -1400,21 +1400,49 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             break
 
     if show_boards:
-        print("\nFinal Grid:")
-        env.render()
-        print("\nDelta (Agent's moves):")
+        initial_board = SudokuEnv.format_grid_to_string(env.initial_puzzle).split('\n')
+        final_board = SudokuEnv.format_grid_to_string(env.current_grid).split('\n')
         delta_grid = env.current_grid - env.initial_puzzle
-        print(SudokuEnv.format_grid_to_string(delta_grid))
+        delta_board = SudokuEnv.format_grid_to_string(delta_grid).split('\n')
+
+        # Print 3 boards horizontally, with some gap
+        gap = "    "
+        headings = ["Initial", "Final", "Moves"]
+        print(gap.join([f"{h:21s}" for h in headings]))
+
+        lines = len(initial_board)
+        print("\n".join([
+            initial_board[i] + gap + final_board[i] + gap + delta_board[i]
+            for i in range(lines)
+        ]))
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
     return is_solved, episode_reward, episode_steps
 
+def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved):
+    """Helper function to log the results of a single test game."""
+    stats = env.episode_stats
+    solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
+    groups_completed = f"R:{stats['completed_rows']}" \
+        f"/C:{stats['completed_cols']}" \
+        f"/B:{stats['completed_boxes']}"
+    print(
+        f"  Game  {i_game:6d} of {num_generated_games:6d}: "
+        f"Steps: {steps:3d}, "
+        # f"Epoch Steps: {epoch_steps_done:6d}, "
+        # f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
+        f"Cells: {solved_ratio}, Groups: {groups_completed}, "
+        f"({'    Solved' if is_solved else 'NOT Solved'}), "
+        f"Reward: {final_reward: 8.2f}, "
+    )
 
 def test(args, env, policy_net) -> int:
     """Tests the trained agent on a set of puzzles."""
     print(f"\n--- Running Test Phase ({args.test_games} games) ---")
     solved_count = 0
     total_reward = 0
+
+    num_generated_games = args.test_games if not args.puzzle else args.test_games - 1
 
     # 1. Test on the fixed puzzle first, if provided
     if args.puzzle:
@@ -1425,13 +1453,13 @@ def test(args, env, policy_net) -> int:
         env.fixed_puzzle = args.fixed_puzzle  # Revert to original setting
 
         is_solved, final_reward, steps = run_test_episode(
-            args, env, policy_net, state)
+            args, env, policy_net, state, show_boards=args.show_boards)
         if is_solved:
             solved_count += 1
         total_reward += final_reward
+        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved)
 
     # 2. Test on procedurally generated puzzles
-    num_generated_games = args.test_games if not args.puzzle else args.test_games - 1
     if num_generated_games > 0:
         print(
             f"\n2. Testing on {num_generated_games} generated puzzles "
@@ -1442,24 +1470,11 @@ def test(args, env, policy_net) -> int:
                 args.test_difficulty_max - args.test_difficulty_min) / num_generated_games)
             state, _ = env.reset(options={"num_clues": num_clues})
             is_solved, final_reward, steps = run_test_episode(
-                args, env, policy_net, state, show_boards=False)
+                args, env, policy_net, state, show_boards=args.show_boards)
             if is_solved:
                 solved_count += 1
             total_reward += final_reward
-            stats = env.episode_stats
-            solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
-            groups_completed = f"R:{stats['completed_rows']}" \
-                f"/C:{stats['completed_cols']}" \
-                f"/B:{stats['completed_boxes']}"
-            print(
-                f"  Game  {i_game:6d} of {num_generated_games:6d}: "
-                f"Steps: {steps:3d}, "
-                # f"Epoch Steps: {epoch_steps_done:6d}, "
-                # f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
-                f"Cells: {solved_ratio}, Groups: {groups_completed}, "
-                f"({'    Solved' if is_solved else 'NOT Solved'}), "
-                f"Reward: {final_reward: 8.2f}, "
-            )
+            log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved)
 
     # 3. Report final statistics
     solve_rate = (solved_count / args.test_games) * \
@@ -1511,6 +1526,7 @@ def main() -> int:
             args.current_epsilon = checkpoint.get(
                 'current_epsilon', args.eps_start)
 
+            # TODO: (when needed) Improve how it logs. This log assumes training, but args.episodes = 0 will skip training
             print(f"Resuming training from episode {args.start_episode}.")
             print(
                 f"Loaded curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
@@ -1533,16 +1549,20 @@ def main() -> int:
     # Prevent the computer from sleeping during training
     restore_sleep_function = prevent_sleep()
 
-    rc = 1
+    rc = 0
     try:
         # Run training if episodes are specified
         if args.episodes > 0:
-            # train is responsible for args.save_model (checkpoint and final)
+            # train is responsible for saving to args.save_model (checkpoint and final)
             rc = train(args, env, policy_net, target_net, optimizer, memory)
         if not rc:
             # Run the test phase if specified
             if args.test_games > 0:
                 rc = test(args, env, policy_net)
+    except Exception as e:
+        # traceback.print_exc()
+        print(f"\nError {e} occurred during training or testing. Exiting.")
+        rc = 1
     finally:
         # This will run whether the training completes successfully or fails
         restore_sleep_function()
