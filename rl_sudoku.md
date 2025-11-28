@@ -21,8 +21,7 @@ The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the for
   * **Hybrid Approach (Implemented):** To make training feasible and robust, our implementation uses a hybrid reward system that combines supervised guidance with rule-based rewards. This provides a strong learning signal while still encouraging valid exploration.
     * **`+100.0`:** For solving the puzzle completely.
     * **`+10.0`:** For placing a digit that matches the pre-computed solution.
-    * **`+5.0`:** For placing a digit that is valid according to Sudoku rules, even if it doesn't match the unique solution. This encourages rule-following.
-    * **`-5.0`:** Penalty for an invalid move that violates Sudoku rules.
+    * **`-5.0`:** Penalty for an invalid move that violates Sudoku rules or deviates from the unique solution path.
     * **`-10.0`:** Penalty for trying to overwrite an already filled cell (though action masking largely prevents this).
 * **Value Function ($Q(s, a)$):** The expected cumulative discounted reward starting from state $s$ and taking action $a$, then following policy $\pi$ thereafter. A neural network will often be used to approximate this function.
 
@@ -156,6 +155,20 @@ We will implement a difficulty "staircase" based on the training episode number.
 3. **Final Phase (Hard):** In the later stages of training, the number of clues is reduced to a standard difficult range (e.g., 25-55), forcing the agent to generalize its learned policy to harder problems.
 
 This staged approach helps stabilize training and leads to a more robust final policy.
+
+### Early Termination on Invalid Solution Path
+
+In a Sudoku puzzle with a single unique solution, any move that does not match that solution immediately creates a board state from which the original puzzle can no longer be solved. Allowing the agent to continue playing on this "poisoned" board introduces flawed data into the training process. The agent might learn spurious correlations from a state that is fundamentally unsolvable.
+
+To prevent this, the environment's `step` function is designed to terminate an episode as soon as the agent makes a move that deviates from the known unique solution.
+
+#### Implementation
+
+1. **Check Against Solution:** In the `step` function, after an action is taken, it is first compared against the ground-truth solution.
+2. **Correct Move:** If the move matches the solution, the agent receives a positive reward, and the episode continues.
+3. **Incorrect Move:** If the move does *not* match the solution (even if it's a "valid" placement by Sudoku rules), the agent receives a penalty, and the episode is immediately **terminated**.
+
+This approach ensures that the agent only learns from sequences of moves that are on a valid path to the correct solution, making training more efficient and focused.
 
 ### Hindsight Experience Replay (HER)
 

@@ -319,7 +319,6 @@ class SudokuEnv(gym.Env):
         sol_str: Optional[str] = None,
         reward_shaping: bool = False,
         fixed_puzzle: bool = False,
-        block_wrong_moves: bool = False,
     ):
         super().__init__()
 
@@ -333,7 +332,6 @@ class SudokuEnv(gym.Env):
         # RL options
         self.reward_shaping = reward_shaping
         self.fixed_puzzle = fixed_puzzle
-        self.block_wrong_moves = block_wrong_moves
 
         # Initial puzzle (0 for blank cells)
         self.default_puzzle, self.default_solution = self._parse_puzzle(
@@ -460,16 +458,12 @@ class SudokuEnv(gym.Env):
                         and np.array_equal(self.current_grid, self.solution_grid)):
                     reward += 100.0  # Large reward for solving
                     terminated = True
-            elif self._is_valid_placement(self.current_grid, row, col, digit):
-                # Correct move: place the digit and give a positive reward
-                self.current_grid[row, col] = digit
-                reward = 5.0
             else:
-                # Incorrect move: place the digit but give a penalty.
-                if not self.block_wrong_moves:
-                    self.current_grid[row, col] = digit
-
-                reward = -5.0  # Penalty for an invalid move (violates rules)
+                # Incorrect move. This path is a dead end as it deviates from the unique solution.
+                # We penalize the agent and terminate the episode immediately to avoid
+                # training on a "poisoned" board state that has no solution.
+                reward = -5.0  # Penalty for an invalid move (violates rules or solution path)
+                truncated = True
 
         # State is returned as float32 for PyTorch compatibility
         observation = self.current_grid.astype(np.float32)
@@ -1087,8 +1081,6 @@ def parse_args():
                         help='Enable action masking (only choose blank cells).')
     parser.add_argument('--fixed_puzzle', action='store_true',
                         help='Use only given puzzle for training.')
-    parser.add_argument('--block_wrong_moves', action='store_true',
-                        help='Prevent agent from making wrong moves.')
 
     # Hyperparameter arguments
     parser.add_argument('--lr', type=float, default=LR,
@@ -1563,7 +1555,6 @@ def main() -> int:
         puzzle_str=args.puzzle,
         reward_shaping=args.reward_shaping,
         fixed_puzzle=args.fixed_puzzle,
-        block_wrong_moves=args.block_wrong_moves,
     )
     policy_net = DQNSolver(env.observation_space.shape,
                            env.action_space.n, args.device).to(args.device)
