@@ -1402,7 +1402,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         f"Total Solved: {solved_count}{difficulty_summary}",
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
-    histogram.log("Training Performance by Difficulty (Blank Cells)")
+    histogram.log("Training Performance by Difficulty")
 
     return 0
 
@@ -1485,9 +1485,12 @@ def test(args, env, policy_net) -> int:
     """Tests the trained agent on a set of puzzles."""
     print(f"\n--- Running Test Phase ({args.test_games} games) ---")
     solved_count = 0
+    total_steps = 0
     total_reward = 0
 
     histogram = DifficultyHistogram()
+    start_time = time.time()
+
     num_generated_games = args.test_games if not args.puzzle else args.test_games - 1
 
     # 1. Test on the fixed puzzle first, if provided
@@ -1503,6 +1506,7 @@ def test(args, env, policy_net) -> int:
         if is_solved:
             solved_count += 1
         total_reward += final_reward
+        total_steps += steps
 
         log_test_result(env, 0, num_generated_games,
                         steps, final_reward, is_solved)
@@ -1523,6 +1527,7 @@ def test(args, env, policy_net) -> int:
             if is_solved:
                 solved_count += 1
             total_reward += final_reward
+            total_steps += steps
 
             log_test_result(env, i_game, num_generated_games,
                             steps, final_reward, is_solved)
@@ -1530,6 +1535,14 @@ def test(args, env, policy_net) -> int:
                 'blank_cells_start'), is_solved)
 
     # 3. Report final statistics
+    end_time = time.time()
+    test_duration = end_time - start_time
+    duration_str = str(timedelta(seconds=test_duration))
+    time_per_step_str = "N/A"
+    if total_steps > 0:
+        time_per_step = test_duration / total_steps
+        time_per_step_str = str(timedelta(seconds=time_per_step))
+
     solve_rate = (solved_count / args.test_games) * \
         100 if args.test_games > 0 else 0
     avg_reward = total_reward / args.test_games if args.test_games > 0 else 0
@@ -1538,8 +1551,9 @@ def test(args, env, policy_net) -> int:
         f"Test Phase Complete {'='*56}",
         f"Puzzles Solved: {solved_count} / {args.test_games} ({solve_rate:.1f}%)",
         f"Average Reward: {avg_reward:.2f}",
+        f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
-    histogram.log("Test Performance by Difficulty (Blank Cells)")
+    histogram.log("Test Performance by Difficulty")
 
     return 0
 
