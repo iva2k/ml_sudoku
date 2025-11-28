@@ -643,6 +643,44 @@ class ReplayBuffer:
         return len(self.memory)
 
 
+class DifficultyHistogram:
+    """Collects and logs statistics on puzzle solve rates by difficulty."""
+
+    def __init__(self):
+        self.solved_by_difficulty = {}
+        self.unsolved_by_difficulty = {}
+
+    def update(self, blank_cells: int, is_solved: bool):
+        """Updates the histogram with the result of a single puzzle."""
+        if blank_cells is None:
+            return
+
+        if is_solved:
+            self.solved_by_difficulty[blank_cells] = self.solved_by_difficulty.get(
+                blank_cells, 0) + 1
+        else:
+            self.unsolved_by_difficulty[blank_cells] = self.unsolved_by_difficulty.get(
+                blank_cells, 0) + 1
+
+    def log(self, title: str):
+        """Prints the formatted histogram table to the console."""
+        print(f"\n--- {title} ---")
+        all_difficulties = sorted(set(self.solved_by_difficulty.keys()) | set(
+            self.unsolved_by_difficulty.keys()))
+        if not all_difficulties:
+            print("No data collected.")
+            return
+
+        print(f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} | {'Solve Rate':>12}")
+        print(f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} + {'-'*12:->12}")
+        for blanks in all_difficulties:
+            solved = self.solved_by_difficulty.get(blanks, 0)
+            unsolved = self.unsolved_by_difficulty.get(blanks, 0)
+            total = solved + unsolved
+            solve_rate = f"{(solved / total * 100):.1f}%" if total > 0 else "N/A"
+            print(f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}")
+
+
 class ResidualBlock(nn.Module):
     """A residual block with two convolutional layers."""
 
@@ -811,6 +849,7 @@ class ReasoningBlock(nn.Module):
     This allows the model to learn complex exclusions like:
     "If Row has 1 AND Col has 2, then I cannot be 1 or 2."
     """
+
     def __init__(self, channels):
         super().__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=1)
@@ -831,6 +870,7 @@ class DQNSolver(nn.Module):
     """
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
     """
+
     def __init__(self, _input_shape, output_size, device=None):
         super().__init__()
         self.device = device
@@ -1202,6 +1242,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     recent_solves = deque(
         maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
+    histogram = DifficultyHistogram()
+
     print(
         f"Starting Training "
         f"at episode {args.start_episode} "
@@ -1292,6 +1334,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         recent_solves.append(1 if episode_solved else 0)
         total_episodes_trained += 1
 
+        # Update difficulty histograms
+        blank_cells = env.episode_stats.get(
+            'blank_cells_start', 81 - num_clues)
+        histogram.update(blank_cells, episode_solved)
+
         # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
         # perform an extra training pass on its full trajectory. This provides immediate
         # feedback on the outcome.
@@ -1338,7 +1385,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             )
 
         # 11. Save the model periodically or at the end of training
-        if args.save_model and (best_reward_str or final_episode):
+        if args.save_model and (best_reward_str or final_episode or i_episode % 100 == 0):
             model_str = 'final model' if final_episode else 'model checkpoint'
             print(f"Saving {model_str} to {args.save_model}...")
             torch.save({
@@ -1363,6 +1410,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         f"Total Solved: {solved_count}{difficulty_summary}",
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
+    histogram.log("Training Performance by Difficulty (Blank Cells)")
+
     return 0
 
 
@@ -1400,8 +1449,10 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             break
 
     if show_boards:
-        initial_board = SudokuEnv.format_grid_to_string(env.initial_puzzle).split('\n')
-        final_board = SudokuEnv.format_grid_to_string(env.current_grid).split('\n')
+        initial_board = SudokuEnv.format_grid_to_string(
+            env.initial_puzzle).split('\n')
+        final_board = SudokuEnv.format_grid_to_string(
+            env.current_grid).split('\n')
         delta_grid = env.current_grid - env.initial_puzzle
         delta_board = SudokuEnv.format_grid_to_string(delta_grid).split('\n')
 
@@ -1418,6 +1469,7 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
     return is_solved, episode_reward, episode_steps
+
 
 def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved):
     """Helper function to log the results of a single test game."""
@@ -1436,12 +1488,14 @@ def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_so
         f"Reward: {final_reward: 8.2f}, "
     )
 
+
 def test(args, env, policy_net) -> int:
     """Tests the trained agent on a set of puzzles."""
     print(f"\n--- Running Test Phase ({args.test_games} games) ---")
     solved_count = 0
     total_reward = 0
 
+    histogram = DifficultyHistogram()
     num_generated_games = args.test_games if not args.puzzle else args.test_games - 1
 
     # 1. Test on the fixed puzzle first, if provided
@@ -1457,7 +1511,10 @@ def test(args, env, policy_net) -> int:
         if is_solved:
             solved_count += 1
         total_reward += final_reward
-        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved)
+
+        log_test_result(env, 0, num_generated_games,
+                        steps, final_reward, is_solved)
+        histogram.update(env.episode_stats.get('blank_cells_start'), is_solved)
 
     # 2. Test on procedurally generated puzzles
     if num_generated_games > 0:
@@ -1474,7 +1531,11 @@ def test(args, env, policy_net) -> int:
             if is_solved:
                 solved_count += 1
             total_reward += final_reward
-            log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved)
+
+            log_test_result(env, i_game, num_generated_games,
+                            steps, final_reward, is_solved)
+            histogram.update(env.episode_stats.get(
+                'blank_cells_start'), is_solved)
 
     # 3. Report final statistics
     solve_rate = (solved_count / args.test_games) * \
@@ -1486,6 +1547,8 @@ def test(args, env, policy_net) -> int:
         f"Puzzles Solved: {solved_count} / {args.test_games} ({solve_rate:.1f}%)",
         f"Average Reward: {avg_reward:.2f}",
     ]))
+    histogram.log("Test Performance by Difficulty (Blank Cells)")
+
     return 0
 
 

@@ -102,3 +102,6 @@ cookiecutter-pypackage-env/
 # .vscode/
 
 *.zip
+
+# Local directories
+_*/
