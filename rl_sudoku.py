@@ -1066,67 +1066,6 @@ def optimize_model(
     optimizer.step()
 
 
-def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Deep Q-Learning Sudoku Solver")
-    # Training arguments
-    parser.add_argument('--episodes', type=int,
-                        default=MAX_EPISODES, help='Number of episodes to train.')
-    parser.add_argument('--puzzle', type=str, default=None,
-                        help='Initial Sudoku puzzle string (81 chars, 0 for blank).')
-    parser.add_argument('--reward_shaping', action='store_true',
-                        help='Enable reward shaping (progress-based rewards).')
-    parser.add_argument('--masking', action='store_true',
-                        help='Enable action masking (only choose blank cells).')
-    parser.add_argument('--fixed_puzzle', action='store_true',
-                        help='Use only given puzzle for training.')
-
-    # Hyperparameter arguments
-    parser.add_argument('--lr', type=float, default=LR,
-                        help='Learning rate for the optimizer.')
-    parser.add_argument('--gamma', type=float, default=GAMMA,
-                        help='Discount factor for future rewards.')
-    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
-                        help='Batch size for training.')
-    parser.add_argument('--memory_capacity', type=int,
-                        default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
-    parser.add_argument('--target_update', type=int, default=TARGET_UPDATE,
-                        help='Frequency (in episodes) to update the target network.')
-    parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
-                        help='Weight decay for the AdamW optimizer.')
-    # Epsilon-greedy arguments
-    parser.add_argument('--eps_start', type=float, default=EPS_START,
-                        help='Starting value of epsilon for exploration.')
-    parser.add_argument('--eps_end', type=float, default=EPS_END,
-                        help='Minimum value of epsilon.')
-    parser.add_argument('--eps_decay', type=float, default=EPS_DECAY,
-                        help='Decay rate for epsilon.')
-
-    parser.add_argument('--log_episodes', type=int, default=10,
-                        help='Log info once every N episodes.')
-
-    # Testing arguments
-    parser.add_argument('--test_games', type=int, default=10,
-                        help='Number of games to test after training.')
-    parser.add_argument('--test_difficulty_min', type=int, default=6,
-                        help='Min blank cells for test puzzles.')
-    parser.add_argument('--test_difficulty_max', type=int, default=61,
-                        help='Max blank cells for test puzzles.')
-    parser.add_argument('--show_boards', action='store_true',
-                        help='Show test puzzles and solutions.')
-
-    # Model persistence
-    parser.add_argument('--save_model', type=str, default=None,
-                        help='Path to save the trained model.')
-    parser.add_argument('--load_model', type=str, default=None,
-                        help='Path to load a pre-trained model.')
-
-    args = parser.parse_args()
-
-    return args, parser
-
-
 def prevent_sleep():
     """
     Prevents the system from entering sleep or turning off the display.
@@ -1556,6 +1495,67 @@ def test(args, env, policy_net) -> int:
     histogram.log("Test Performance by Difficulty")
 
     return 0
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Deep Q-Learning Sudoku Solver")
+    # Training arguments
+    parser.add_argument('--episodes', type=int,
+                        default=MAX_EPISODES, help='Number of episodes to train.')
+    parser.add_argument('--puzzle', type=str, default=None,
+                        help='Initial Sudoku puzzle string (81 chars, 0 for blank).')
+    parser.add_argument('--reward_shaping', action='store_true',
+                        help='Enable reward shaping (progress-based rewards).')
+    parser.add_argument('--masking', action='store_true',
+                        help='Enable action masking (only choose blank cells).')
+    parser.add_argument('--fixed_puzzle', action='store_true',
+                        help='Use only given puzzle for training.')
+
+    # Hyperparameter arguments
+    parser.add_argument('--lr', type=float, default=LR,
+                        help='Learning rate for the optimizer.')
+    parser.add_argument('--gamma', type=float, default=GAMMA,
+                        help='Discount factor for future rewards.')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
+                        help='Batch size for training.')
+    parser.add_argument('--memory_capacity', type=int,
+                        default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
+    parser.add_argument('--target_update', type=int, default=TARGET_UPDATE,
+                        help='Frequency (in episodes) to update the target network.')
+    parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
+                        help='Weight decay for the AdamW optimizer.')
+    # Epsilon-greedy arguments
+    parser.add_argument('--eps_start', type=float, default=EPS_START,
+                        help='Starting value of epsilon for exploration.')
+    parser.add_argument('--eps_end', type=float, default=EPS_END,
+                        help='Minimum value of epsilon.')
+    parser.add_argument('--eps_decay', type=float, default=EPS_DECAY,
+                        help='Decay rate for epsilon.')
+
+    parser.add_argument('--log_episodes', type=int, default=10,
+                        help='Log info once every N episodes.')
+
+    # Testing arguments
+    parser.add_argument('--test_games', type=int, default=10,
+                        help='Number of games to test after training.')
+    parser.add_argument('--test_difficulty_min', type=int, default=6,
+                        help='Min blank cells for test puzzles.')
+    parser.add_argument('--test_difficulty_max', type=int, default=61,
+                        help='Max blank cells for test puzzles.')
+    parser.add_argument('--show_boards', action='store_true',
+                        help='Show test puzzles and solutions.')
+
+    # Model persistence
+    parser.add_argument('--save_model', type=str, default=None,
+                        help='Path to save the trained model.')
+    parser.add_argument('--load_model', type=str, default=None,
+                        help='Path to load a pre-trained model.')
+
+    args = parser.parse_args()
+
+    return args, parser
 
 
 def main() -> int:
