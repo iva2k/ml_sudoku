@@ -55,6 +55,10 @@ WEIGHT_DECAY = 0.01
 # Large Negative reward to suppress known illegal actions
 ILLEGAL_ACTION_VALUE = -1e10
 
+# Dafault test settings:
+TEST_GAMES_REPEAT = 5
+TEST_DIFFICULTY_MIN = 6
+TEST_DIFFICULTY_MAX = 61
 
 def _generate_initial_grid1() -> np.ndarray:
     """Generates a complete, solved Sudoku grid using a randomized backtracking algorithm."""
@@ -462,7 +466,8 @@ class SudokuEnv(gym.Env):
                 # Incorrect move. This path is a dead end as it deviates from the unique solution.
                 # We penalize the agent and terminate the episode immediately to avoid
                 # training on a "poisoned" board state that has no solution.
-                reward = -5.0  # Penalty for an invalid move (violates rules or solution path)
+                # Penalty for an invalid move (violates rules or solution path)
+                reward = -5.0
                 truncated = True
 
         # State is returned as float32 for PyTorch compatibility
@@ -1469,9 +1474,10 @@ def test(args, env, policy_net) -> int:
             f"\n2. Testing on {num_generated_games} generated puzzles "
             f"(Difficulty: {args.test_difficulty_min}-{args.test_difficulty_max})..."
         )
+        diff_slope = (1 + args.test_difficulty_max - args.test_difficulty_min) / num_generated_games
         for i_game in range(1, num_generated_games+1):
-            num_clues = 81 - math.floor(0.5 + args.test_difficulty_min + (i_game - 1) * (
-                args.test_difficulty_max - args.test_difficulty_min) / num_generated_games)
+            difficulty = args.test_difficulty_min + math.floor( (i_game - 1) * diff_slope )
+            num_clues = 81 - difficulty
             state, _ = env.reset(options={"num_clues": num_clues})
             is_solved, final_reward, steps = run_test_episode(
                 args, env, policy_net, state, show_boards=args.show_boards)
@@ -1550,11 +1556,12 @@ def parse_args():
                         help='Log info once every N episodes.')
 
     # Testing arguments
-    parser.add_argument('--test_games', type=int, default=10,
+    default_test_games = (TEST_DIFFICULTY_MAX-TEST_DIFFICULTY_MIN+1)*TEST_GAMES_REPEAT
+    parser.add_argument('--test_games', type=int, default=default_test_games,
                         help='Number of games to test after training.')
-    parser.add_argument('--test_difficulty_min', type=int, default=6,
+    parser.add_argument('--test_difficulty_min', type=int, default=TEST_DIFFICULTY_MIN,
                         help='Min blank cells for test puzzles.')
-    parser.add_argument('--test_difficulty_max', type=int, default=61,
+    parser.add_argument('--test_difficulty_max', type=int, default=TEST_DIFFICULTY_MAX,
                         help='Max blank cells for test puzzles.')
     parser.add_argument('--show_boards', action='store_true',
                         help='Show test puzzles and solutions.')
