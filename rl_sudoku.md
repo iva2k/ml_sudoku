@@ -156,13 +156,15 @@ We will implement a difficulty "staircase" based on the training episode number.
 
 This staged approach helps stabilize training and leads to a more robust final policy.
 
-### Early Termination on Invalid Solution Path
+### Early Termination on Invalid Solution Path (ISP)
 
 In a Sudoku puzzle with a single unique solution, any move that does not match that solution immediately creates a board state from which the original puzzle can no longer be solved. Allowing the agent to continue playing on this "poisoned" board introduces flawed data into the training process. The agent might learn spurious correlations from a state that is fundamentally unsolvable.
 
 To prevent this, the environment's `step` function is designed to terminate an episode as soon as the agent makes a move that deviates from the known unique solution.
 
-#### Implementation
+If we went another way and allowed agent to make wrong moves, we would need to design for correcting or backtracking the wrong moves by providing additional channel in board state that marks clues that are given vs. the agent moves, and change the environment and the reward function to allow changing already made moves. That woul also require allowing much longer games.
+
+#### ISP Implementation
 
 1. **Check Against Solution:** In the `step` function, after an action is taken, it is first compared against the ground-truth solution.
 2. **Correct Move:** If the move matches the solution, the agent receives a positive reward, and the episode continues.
@@ -176,7 +178,7 @@ Standard DQN training involves sampling random past experiences from a large rep
 
 **Hindsight Experience Replay (HER)** is a technique that leverages the outcome of an entire episode to provide more focused training. After an episode concludes, we have a complete trajectory of moves that led to either a success (solved puzzle) or a failure (unsolved board). This complete story is a powerful learning signal.
 
-#### Implementation
+#### HER Implementation
 
 Our implementation of HER works as follows:
 
