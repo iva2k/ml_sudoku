@@ -1183,142 +1183,154 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     )
     start_time = time.time()
 
-    for i_episode in range(args.start_episode, args.start_episode + args.episodes):
-        final_episode = i_episode == args.start_episode + args.episodes - 1
+    try:
+        for i_episode in range(args.start_episode, args.start_episode + args.episodes):
+            final_episode = i_episode == args.start_episode + args.episodes - 1
 
-        # 1. Adaptive Curriculum Learning
-        curriculum_level = check_curriculum_progress(
-            curriculum_level, recent_solves)
-        if curriculum_level < len(CURRICULUM_LEVELS) - 1 and len(recent_solves) == recent_solves.maxlen:
-            # Reset window for new level
-            recent_solves = deque(
-                maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+            # 1. Adaptive Curriculum Learning
+            curriculum_level = check_curriculum_progress(
+                curriculum_level, recent_solves)
+            if curriculum_level < len(CURRICULUM_LEVELS) - 1 and len(recent_solves) == recent_solves.maxlen:
+                # Reset window for new level
+                recent_solves = deque(
+                    maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
-        # 2. Reset the environment and get initial state
-        num_clues = get_curriculum_puzzle_clues(curriculum_level)
-        reset_options = {"num_clues": num_clues}
-        state, _info = env.reset(options=reset_options)
+            # 2. Reset the environment and get initial state
+            num_clues = get_curriculum_puzzle_clues(curriculum_level)
+            reset_options = {"num_clues": num_clues}
+            state, _info = env.reset(options=reset_options)
 
-        episode_steps = 0
-        episode_reward = 0
-        episode_solved = False
-        episode_transitions = []  # Store transitions for this episode
+            episode_steps = 0
+            episode_reward = 0
+            episode_solved = False
+            episode_transitions = []  # Store transitions for this episode
 
-        # 3. Run the episode
-        for _step in range(81):  # Max 81 steps (cells) per episode
-            action, current_epsilon = get_action(
-                state,
-                policy_net,
-                env.action_space,
-                current_epsilon,
-                args.eps_end,
-                args.eps_decay,
-                args.masking
-            )
+            # 3. Run the episode
+            for _step in range(81):  # Max 81 steps (cells) per episode
+                action, current_epsilon = get_action(
+                    state,
+                    policy_net,
+                    env.action_space,
+                    current_epsilon,
+                    args.eps_end,
+                    args.eps_decay,
+                    args.masking
+                )
 
-            if action is None:
-                # No legal moves were available, terminate the episode
-                # print("No legal moves left. Ending episode.")
-                break
+                if action is None:
+                    # No legal moves were available, terminate the episode
+                    # print("No legal moves left. Ending episode.")
+                    break
 
-            # 4. Take action in environment
-            observation, reward, terminated, truncated, _info = env.step(
-                action)
-            next_state = observation
-            done = terminated or truncated
+                # 4. Take action in environment
+                observation, reward, terminated, truncated, _info = env.step(
+                    action)
+                next_state = observation
+                done = terminated or truncated
 
-            # 5. Store the transition in the replay memory
-            # Convert numpy arrays to tensors for storage
-            state_tensor = torch.from_numpy(state).float()  # Stored on CPU
-            next_state_tensor = torch.from_numpy(
-                next_state).float()  # Stored on CPU
-            transition = Transition(
-                state_tensor, action, reward, next_state_tensor, done, i_episode)
-            memory.push(*transition)
-            # Also store for potential end-of-episode training
-            episode_transitions.append(transition)
+                # 5. Store the transition in the replay memory
+                # Convert numpy arrays to tensors for storage
+                state_tensor = torch.from_numpy(state).float()  # Stored on CPU
+                next_state_tensor = torch.from_numpy(
+                    next_state).float()  # Stored on CPU
+                transition = Transition(
+                    state_tensor, action, reward, next_state_tensor, done, i_episode)
+                memory.push(*transition)
+                # Also store for potential end-of-episode training
+                episode_transitions.append(transition)
 
-            # 6. Move to the next state
-            state = next_state
-            episode_reward += reward
+                # 6. Move to the next state
+                state = next_state
+                episode_reward += reward
 
-            # 7. Perform optimization step
-            transitions = memory.sample(args.batch_size)
-            optimize_model(
-                policy_net, target_net, optimizer,
-                transitions,
-                args.gamma, args.masking
-            )
-            epoch_steps_done += 1
-            episode_steps += 1
+                # 7. Perform optimization step
+                transitions = memory.sample(args.batch_size)
+                optimize_model(
+                    policy_net, target_net, optimizer,
+                    transitions,
+                    args.gamma, args.masking
+                )
+                epoch_steps_done += 1
+                episode_steps += 1
 
-            if terminated:
-                episode_solved = True
-                solved_count += 1
-                if min_clues_solved > num_clues:
-                    min_clues_solved = num_clues
-                break
-            if truncated:
-                # Typically not used in Sudoku, but good practice
-                break
+                if terminated:
+                    episode_solved = True
+                    solved_count += 1
+                    if min_clues_solved > num_clues:
+                        min_clues_solved = num_clues
+                    break
+                if truncated:
+                    # Typically not used in Sudoku, but good practice
+                    break
 
-        recent_solves.append(1 if episode_solved else 0)
-        total_episodes_trained += 1
+            recent_solves.append(1 if episode_solved else 0)
+            total_episodes_trained += 1
 
-        # Update difficulty histograms
-        blank_cells = env.episode_stats.get(
-            'blank_cells_start', 81 - num_clues)
-        histogram.update(blank_cells, episode_solved)
+            # Update difficulty histograms
+            blank_cells = env.episode_stats.get(
+                'blank_cells_start', 81 - num_clues)
+            histogram.update(blank_cells, episode_solved)
 
-        # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
-        # perform an extra training pass on its full trajectory. This provides immediate
-        # feedback on the outcome.
-        if episode_transitions:
-            # For successful episodes, this reinforces the good moves.
-            # For failed episodes, this reinforces the penalties for bad moves.
-            optimize_model(
-                policy_net, target_net, optimizer,
-                episode_transitions,
-                args.gamma, args.masking
-            )
+            # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
+            # perform an extra training pass on its full trajectory. This provides immediate
+            # feedback on the outcome.
+            if episode_transitions:
+                # For successful episodes, this reinforces the good moves.
+                # For failed episodes, this reinforces the penalties for bad moves.
+                optimize_model(
+                    policy_net, target_net, optimizer,
+                    episode_transitions,
+                    args.gamma, args.masking
+                )
 
-        # 9. Update the target network periodically
-        if i_episode % args.target_update == 0:
-            target_net.load_state_dict(policy_net.state_dict())
+            # 9. Update the target network periodically
+            if i_episode % args.target_update == 0:
+                target_net.load_state_dict(policy_net.state_dict())
 
-        # 10. Logging and Reporting
-        best_reward_str = ""
-        if best_reward == -float('inf') or episode_reward > best_reward:
-            # if best_reward != -float('inf'):
-            best_reward_str = " (New Best Reward)"
-            best_reward = episode_reward
+            # 10. Logging and Reporting
+            best_reward_str = ""
+            if best_reward == -float('inf') or episode_reward > best_reward:
+                # if best_reward != -float('inf'):
+                best_reward_str = " (New Best Reward)"
+                best_reward = episode_reward
 
-        if episode_solved or best_reward_str or i_episode % args.log_episodes == 0:
-            # if not env.fixed_puzzle:
-            #     print(f"Episode {i_episode}: New puzzle:")
-            #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
+            if episode_solved or best_reward_str or i_episode % args.log_episodes == 0:
+                # if not env.fixed_puzzle:
+                #     print(f"Episode {i_episode}: New puzzle:")
+                #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
 
-            stats = env.episode_stats
-            solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
-            groups_completed = f"R:{stats['completed_rows']}" \
-                f"/C:{stats['completed_cols']}" \
-                f"/B:{stats['completed_boxes']}"
+                stats = env.episode_stats
+                solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
+                groups_completed = f"R:{stats['completed_rows']}" \
+                    f"/C:{stats['completed_cols']}" \
+                    f"/B:{stats['completed_boxes']}"
 
-            print(
-                f"Episode {i_episode:6d}: "
-                f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
-                f"Steps: {episode_steps:3d}, "
-                f"Epoch Steps: {epoch_steps_done:6d}, "
-                f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
-                f"Cells: {solved_ratio}, Groups: {groups_completed}, "
-                f"({'    Solved' if episode_solved else 'NOT Solved'}), "
-                f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
-            )
+                print(
+                    f"Episode {i_episode:6d}: "
+                    f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
+                    f"Steps: {episode_steps:3d}, "
+                    f"Epoch Steps: {epoch_steps_done:6d}, "
+                    f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
+                    f"Cells: {solved_ratio}, Groups: {groups_completed}, "
+                    f"({'    Solved' if episode_solved else 'NOT Solved'}), "
+                    f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
+                )
 
-        # 11. Save the model periodically or at the end of training
-        if args.save_model and (best_reward_str or final_episode or i_episode % 100 == 0):
-            model_str = 'final model' if final_episode else 'model checkpoint'
-            print(f"Saving {model_str} to {args.save_model}...")
+            # 11. Save the model periodically or at the end of training
+            if args.save_model and (best_reward_str or final_episode or i_episode % 100 == 0):
+                model_str = 'final model' if final_episode else 'model checkpoint'
+                print(f"Saving {model_str} to {args.save_model}...")
+                torch.save({
+                    'model_state_dict': policy_net.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'total_episodes_trained': total_episodes_trained,
+                    'curriculum_level': curriculum_level,
+                    'current_epsilon': current_epsilon,
+                }, args.save_model)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user (Ctrl+C).")
+        if args.save_model:
+            print(f"Saving final model state to {args.save_model}...")
             torch.save({
                 'model_state_dict': policy_net.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
