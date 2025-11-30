@@ -195,3 +195,11 @@ This approach provides immediate, contextual feedback to the agent, helping it l
 As the network gets deeper to capture more complex relationships across the Sudoku grid, it can become harder to train due to issues like the vanishing gradient problem. To combat this, we can introduce **Residual Connections** (or skip connections), a core concept from Residual Networks (ResNets).
 
 A residual block allows the network to bypass one or more layers, simply passing the input through. This makes it easier for gradients to flow during backpropagation and allows the model to learn an "identity" function if a block of layers is not useful. For Sudoku, this means we can build a deeper, more powerful CNN that can better integrate local (3x3 box) and global (full grid) information without sacrificing training stability.
+
+### Debugging Insights: Overcoming Training Stagnation
+
+During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:
+
+1. **Silent Computation Graph Corruption:** The most significant bug was an in-place modification of the target Q-values tensor within the `optimize_model` function. Even inside a `with torch.no_grad()` block, altering the tensor directly (`target_q_values[~masks_t] = -1e10`) corrupted the computation graph. This silently prevented gradients from flowing back to the target network, effectively halting all learning. The solution was to replace the in-place operation with an out-of-place one (e.g., `masked_q = target_q_values + additive_mask`), which preserves the graph's integrity and allows learning to proceed.
+
+2. **Data Type Inconsistency:** The state representation was inconsistently handled, switching between `np.int32` and `np.float32` at various stages. This created unnecessary overhead and potential for subtle errors, particularly in functions like `generate_legal_mask` that rely on integer-based logic to build sets. The pipeline was refactored to use `np.int32` for all CPU-side environment logic and `torch.FloatTensor` (via one-hot encoding) exclusively for GPU-side network computations. This created a cleaner, more robust, and more efficient data flow.
