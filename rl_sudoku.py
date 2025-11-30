@@ -756,15 +756,11 @@ def get_action(
     # Epsilon decay
     new_epsilon = max(eps_end, epsilon * eps_decay)
 
-    mask = None
-    if use_masking:
-        # Here state is always numpy
-        mask = generate_legal_mask(state)
-
     if random.random() < current_epsilon:
         # Explore: Choose a random action
         if use_masking:
             # Sample only from legal actions
+            mask = generate_legal_mask(state)
             legal_actions = np.nonzero(mask)[0]
             if len(legal_actions) == 0:
                 # No legal moves are possible (board is full). Signal to terminate.
@@ -782,12 +778,14 @@ def get_action(
 
             if use_masking:
                 # Apply mask: set Q-values of illegal actions to a very small number
-                # Create a mask with 0 for legal actions and a large negative value for illegal ones
-                mask_t = torch.from_numpy(mask).to(
-                    policy_net.device).unsqueeze(0)
+                # Transfer state to GPU and generate mask on GPU
+                state_t = torch.from_numpy(state).to(policy_net.device)
+                mask_t = generate_legal_mask_gpu(state_t)
+
                 masked_q = q_values.clone()
-                masked_q[~mask_t] = ILLEGAL_ACTION_VALUE
-                action = masked_q.argmax().item()
+                # Unsqueeze to add batch dim
+                masked_q[~mask_t.unsqueeze(0)] = ILLEGAL_ACTION_VALUE
+                action = masked_q.argmax(dim=1).item()
             else:
                 # Use argmax to get the best action index
                 action = q_values.argmax(dim=1).item()
@@ -853,10 +851,12 @@ def optimize_model(
 
             if use_masking:
                 # Generate and apply mask to target Q-values
-                # Using CPU version here for simplicity as it involves a list comprehension
-                masks_np = np.stack([generate_legal_mask(s.cpu().numpy())
-                                    for s in non_final_next_states_np])
-                masks_t = torch.from_numpy(masks_np).to(device)
+                # Convert numpy states to a batch of tensors on the GPU for accelerated masking
+                non_final_next_states_gpu = torch.stack(
+                    non_final_next_states_np).to(device)
+                # Generate masks for the entire batch on the GPU
+                masks_t = torch.stack([generate_legal_mask_gpu(s)
+                                      for s in non_final_next_states_gpu])
 
                 # Avoid in-place modification of target_q_values.
                 # Create an additive mask instead of modifying the tensor directly.
