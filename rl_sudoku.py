@@ -1146,9 +1146,14 @@ def optimize_model(
                                     for s in non_final_next_states_np])
                 masks_t = torch.from_numpy(masks_np).to(device)
 
-                target_q_values[~masks_t] = ILLEGAL_ACTION_VALUE
+                # Avoid in-place modification of target_q_values.
+                # Create an additive mask instead of modifying the tensor directly.
+                # This prevents corruption of the computation graph.
+                additive_mask = torch.where(masks_t, 0.0, ILLEGAL_ACTION_VALUE)
+                masked_target_q = target_q_values + additive_mask
+
                 # Take the max over the masked Q-values
-                next_state_values[non_final_mask] = target_q_values.max(1)[
+                next_state_values[non_final_mask] = masked_target_q.max(1)[
                     0].detach()
             else:
                 # Use standard max Q-value
