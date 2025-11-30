@@ -39,6 +39,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from dqn_cnn1 import DQNSolverCNN1
+from dqn_cnn2 import DQNSolverCNN2
+from dqn_cnn3 import DQNSolverCNN3
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 # TODO: (when needed) Adjust these during Phase 3
@@ -734,364 +737,6 @@ class DifficultyHistogram:
         return float(max_100_diff) + fractional_part
 
 
-class ResidualBlock(nn.Module):
-    """A residual block with two convolutional layers."""
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(
-            out_channels, out_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-    def forward(self, x):
-        """Forward pass through the residual block."""
-        residual = x
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.relu(out + residual)
-
-
-class DQNSolver1(nn.Module):
-    """
-    The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
-
-    1. Analysis of the DQNSolver1 Architecture
-
-    DQNSolver1 is a classic Deep Convolutional Neural Network (CNN) architecture, similar to what
-    one might use for image classification tasks. It's built using standard, well-understood
-    components:
-
-       * **Initial Convolution**: It starts with a Conv2d layer that takes the 10-channel one-hot
-          encoded input and transforms it into 128 feature maps. The kernel size is 3x3 with
-          padding, which is a standard choice for preserving the 9x9 spatial dimensions while
-          extracting local features.
-       * **Residual Blocks**: The core of the network consists of three ResidualBlocks. Each block
-         contains two 3x3 convolutional layers. The "residual connection" (adding the input of the
-         block to its output) is a powerful technique borrowed from ResNet architectures. It helps
-         in training deeper networks by allowing gradients to flow more easily, preventing the
-         "vanishing gradient" problem. This allows the network to build up more complex feature
-         representations layer by layer.
-       * **Final Convolution and Flattening**: After the residual blocks, another convolutional
-         layer processes the features, which are then flattened from a 2D grid of features
-         (128 x 9 x 9) into a single long vector.
-       * **Fully Connected Head**: This flattened vector is passed through two dense (Linear)
-         layers, which ultimately produce the final 729 Q-values, one for each possible action
-         (cell + digit).
-
-    In essence, DQNSolver1 treats the Sudoku grid as a small 9x9 image with 10 channels and uses
-    a standard deep learning approach to find patterns in it.
-
-    2. Critique of Its Weaknesses
-
-    While this architecture is powerful for general-purpose image analysis, it has significant
-    weaknesses when applied to the specific, logical structure of Sudoku. Its main drawback is a
-    mismatch between the network's inductive bias and the problem's domain logic.
-
-       1. Lack of Sudoku-Specific Inductive Bias: The network's primary tool is the 3x3
-          convolution. A 3x3 kernel is a local feature detector. It's designed to find patterns
-          among a cell and its 8 immediate neighbors. However, Sudoku rules are not local in this
-          way. A cell is constrained by 20 other cells spread across its entire row, its entire
-          column, and its 3x3 box.
-
-          * For a 3x3 kernel at cell (4,4) to "see" the value at cell (4,8) at the end of the row,
-            the information must be passed through multiple convolutional layers. This is a very
-            indirect and inefficient way to learn the fundamental rule "no two same numbers in a
-            row."
-          * The model has no built-in understanding of rows, columns, or non-overlapping boxes. It
-            must learn these geometric concepts from scratch, which is a difficult task for a
-            generic CNN.
-
-       2. **Inefficient Information Aggregation**: Because the architecture relies on stacking
-          local kernels, it struggles with long-range dependencies. The ResidualBlocks create a
-          deep network, which in theory gives it a larger "receptive field" (the area of the input
-          that can influence a single output feature). However, it's still a brute-force way to
-          achieve the global information sharing that Sudoku requires. The network has to expend a
-          lot of its capacity just to learn how to gather information from the correct cells,
-          leaving less capacity for actual logical reasoning.
-
-       3. **"Where" and "What" are Conflated**: Similar to the other CNN-based models, the final
-          output is a single flat vector of 729 actions. The network must learn a complex mapping
-          from its grid-based features to this unstructured action space. This makes it difficult
-          to learn cell-specific properties versus digit-specific properties, as the two concepts
-          are entangled in the final output layer.
-
-    In summary, DQNSolver1 is a powerful but generic tool. It's like giving a carpenter a high-end
-    sledgehammer for a task that requires a precision screwdriver. It might eventually get the job
-    done for very simple puzzles by sheer force (i.e., memorizing patterns), but it lacks the
-    architectural finesse to learn the explicit, rule-based, long-range reasoning needed for
-    advanced Sudoku. The DQNSolver (with SudokuConstraintConv) and the DQNSolverTransformer are
-    significant improvements because their architectures are explicitly designed to respect the
-    row, column, and box geometry of the game.
-
-    """
-
-    def __init__(self, _input_shape, output_size, device=None):
-        super().__init__()
-        self.device = device
-
-        # TODO: (when needed) Implement tying _input_shape to the CNN input shape.
-
-        # Calculate the size after convolutional layers (9x9 grid remains 9x9 with padding=1, k=3)
-        # 128 channels * 9 rows * 9 cols = 10368
-        self.flattened_size = 128 * 9 * 9
-
-        self.net = nn.Sequential(
-            # Initial convolution to get to the desired channel dimension
-            nn.Conv2d(10, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-
-            # Stack of residual blocks to deepen the network effectively
-            ResidualBlock(128, 128),
-            ResidualBlock(128, 128),
-            ResidualBlock(128, 128),
-
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-
-            nn.Flatten(),
-
-            # Fully Connected Layers (DNN head)
-            nn.Linear(self.flattened_size, 1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, output_size)  # Final output is 729 Q-values
-        )
-
-    def forward(self, x):
-        """
-        Forward pass through the CNN and then the fully connected layers.
-        Input x: (batch_size, 10, 9, 9) for one-hot encoded state.
-        """
-        # Input is already a one-hot tensor
-        x = x.to(self.device)
-
-        q_values = self.net(x)
-        return q_values
-
-
-class SudokuConstraintConv(nn.Module):
-    """
-    A custom layer that respects Sudoku geometry.
-    It computes features for:
-    1. Entire Rows (1x9)
-    2. Entire Cols (9x1)
-    3. Entire Boxes (3x3 non-overlapping)
-    And broadcasts them back to the grid cells.
-    """
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        # 1x9 convolution finds row patterns
-        self.row_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=(1, 9))
-        # 9x1 convolution finds column patterns
-        self.col_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=(9, 1))
-        # 3x3 stride 3 convolution finds box patterns (non-overlapping tiling)
-        self.box_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, stride=3)
-
-        self.bn = nn.BatchNorm2d(out_channels * 3)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        """Forward pass."""
-        # x: (B, C, 9, 9)
-
-        # 1. Row Features: (B, Out, 9, 1)
-        r = self.row_conv(x)
-        # Expand back to (B, Out, 9, 9) by repeating across columns
-        r = r.expand(-1, -1, -1, 9)
-
-        # 2. Col Features: (B, Out, 1, 9)
-        c = self.col_conv(x)
-        # Expand back to (B, Out, 9, 9) by repeating across rows
-        c = c.expand(-1, -1, 9, -1)
-
-        # 3. Box Features: (B, Out, 3, 3)
-        b = self.box_conv(x)
-        # Expand back to (B, Out, 9, 9) by tiling 3x3 blocks
-        b = b.repeat_interleave(3, dim=2).repeat_interleave(3, dim=3)
-
-        # Concatenate all features: (B, Out*3, 9, 9)
-        out = torch.cat([r, c, b], dim=1)
-        return self.relu(self.bn(out))
-
-
-class DQNSolver2(nn.Module):
-    """
-    The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
-    """
-
-    def __init__(self, _input_shape, output_size, device=None):
-        super().__init__()
-        self.device = device
-
-        # 1. First Pass: Extract geometric constraints
-        # Input: 10 channels (one-hot digits)
-        self.constraint_conv = SudokuConstraintConv(10, 64)
-
-        # 2. Mixing Layer: 1x1 conv to combine row/col/box info per pixel
-        # Input channels = 64 * 3 = 192
-        self.mix_conv = nn.Sequential(
-            nn.Conv2d(192, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True)
-        )
-
-        # 3. Second Pass: Deepen reasoning on mixed features
-        self.constraint_conv2 = SudokuConstraintConv(128, 64)
-
-        # 4. Final Head
-        # Input channels = 64 * 3 = 192
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(192 * 9 * 9, 1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, output_size)
-        )
-
-    def forward(self, x):
-        """Forward pass."""
-        x = self.constraint_conv(x)
-        x = self.mix_conv(x)
-        x = self.constraint_conv2(x)
-        return self.fc(x)
-
-
-class ReasoningBlock(nn.Module):
-    """
-    A logical processing unit for each cell.
-    Uses 1x1 convolutions to act as a per-pixel Dense Neural Network.
-    This allows the model to learn complex exclusions like:
-    "If Row has 1 AND Col has 2, then I cannot be 1 or 2."
-    """
-
-    def __init__(self, channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-
-    def forward(self, x):
-        """Forward pass."""
-        residual = x
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.relu(out + residual)
-
-
-class DQNSolver(nn.Module):
-    """
-    The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
-
-    1. Analysis of the Current DQNSolver
-
-    The current DQNSolver is quite sophisticated. It's not a simple CNN; it has specialized
-    components designed for Sudoku:
-
-    * **SudokuConstraintConv**: This is the model's "perception" layer. It uses specialized
-       convolutions (1x9 for rows, 9x1 for columns, 3x3 with stride 3 for boxes) to gather
-       information about which numbers are present in each of a cell's three constraining groups.
-       It then concatenates these features. This is an excellent design for capturing the basic
-       geometric constraints of the game.
-    * **ReasoningBlock**: This is intended to be the "logic" unit. It uses 1x1 convolutions, which
-       act like small neural networks applied independently to the feature set of each of the 81
-       cells. The idea is for it to learn logical rules like, "If my row features show a '5' and
-       my column features show a '7', then I cannot be a 5 or 7."
-    * **Overall Flow**: The model perceives constraints, "thinks" about them with reasoning blocks,
-       perceives them again, and then makes a decision via a fully connected head.
-
-    2. Critique of Its Weaknesses
-
-    Despite the thoughtful design, there are fundamental architectural limitations that prevent it
-    from learning the complex, chained logic required for difficult Sudoku puzzles.
-
-       1. Limited Information Flow (The Core Problem): The ReasoningBlock operates on each cell in
-          isolation. It can see the features for its own row, column, and box, but it cannot see
-          the features of other cells. A difficult Sudoku requires reasoning like:
-
-          "If the only two possible cells for a '7' in this box are in the same row, then no other
-          cell in that entire row (even outside this box) can be a '7'."
-
-    The model cannot learn this. A cell's ReasoningBlock has no information about the
-    possibilities of its neighbors. It's like trying to solve a Sudoku by only looking at one cell
-    at a time and the numbers already placed in its groups, without considering the empty cells.
-
-       2. Output Representation is Not Cell-Centric: The model flattens everything into a single
-          vector of 729 Q-values (row * 81 + col * 9 + digit). This mixes the "where" (cell) and
-          "what" (digit) into one large action space. A more natural approach for Sudoku is to
-          first decide which cell to fill and then what digit to place in it. The current
-          structure makes it harder for the model to reason about the properties of a single cell.
-
-       3. Reliance on Action Masking: The agent isn't being forced to learn the basic rules
-          because the generate_legal_mask function does it externally. The model doesn't get
-          penalized for suggesting an illegal move (e.g., placing a '5' in a row that already has
-          one); that action is simply filtered out. This is a crutch that prevents it from
-          learning the most fundamental layer of reasoning.
-
-    """
-
-    def __init__(self, _input_shape, output_size, device=None):
-        super().__init__()
-        self.device = device
-
-        # 1. Perception: Extract geometric constraints
-        # Input: 10 channels (one-hot digits)
-        # Output: 64 features per Row/Col/Box -> 192 total
-        self.constraint_conv = SudokuConstraintConv(10, 64)
-
-        # 2. Reasoning: Deep per-pixel logic (1x1 Convolutions)
-        # We first reduce dimensions to make reasoning efficient
-        self.reduce = nn.Sequential(
-            nn.Conv2d(192, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True)
-        )
-
-        # Stack of reasoning blocks (Thinking time)
-        self.reasoning = nn.Sequential(
-            ReasoningBlock(128),
-            ReasoningBlock(128),
-            ReasoningBlock(128)
-        )
-
-        # 3. Second Pass: Re-evaluate constraints based on reasoning features
-        # This helps propagate complex dependencies
-        self.constraint_conv2 = SudokuConstraintConv(128, 64)
-
-        # 4. Final Decision
-        # Input channels = 64 * 3 (from conv2) = 192
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(192 * 9 * 9, 1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, output_size)
-        )
-
-    def forward(self, x):
-        """Forward pass."""
-        # Stage 1: See constraints
-        x = self.constraint_conv(x)
-
-        # Stage 2: Think about exclusions (per cell)
-        x = self.reduce(x)
-        x = self.reasoning(x)
-
-        # Stage 3: Re-check context
-        x = self.constraint_conv2(x)
-
-        # Stage 4: Act
-        return self.fc(x)
-
-
 def get_action(
     state,
     policy_net,
@@ -1698,6 +1343,9 @@ def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Deep Q-Learning Sudoku Solver")
+    parser.add_argument('--model', type=str, default="transformer1",
+                        choices=["cnn1", "cnn2", "cnn3", "transformer1"],
+                        help='Model architecture to use.')
     # Training arguments
     parser.add_argument('--episodes', type=int,
                         default=MAX_EPISODES, help='Number of episodes to train.')
@@ -1780,15 +1428,26 @@ def main() -> int:
         reward_shaping=args.reward_shaping,
         fixed_puzzle=args.fixed_puzzle,
     )
-    # policy_net = DQNSolver(env.observation_space.shape,
-    #                        env.action_space.n, args.device).to(args.device)
-    # target_net = DQNSolver(env.observation_space.shape,
-    #                        env.action_space.n, args.device).to(args.device)
-    # Use the new Transformer-based model
-    policy_net = DQNSolverTransformer(env.observation_space.shape,
-                                      env.action_space.n, args.device).to(args.device)
-    target_net = DQNSolverTransformer(env.observation_space.shape,
-                                      env.action_space.n, args.device).to(args.device)
+
+    # Choose model
+    solver = None
+    if args.model == "cnn1":
+        solver = DQNSolverCNN1
+    elif args.model == "cnn2":
+        solver = DQNSolverCNN2
+    elif args.model == "cnn3":
+        solver = DQNSolverCNN3
+    elif args.model == "transformer1":
+        solver = DQNSolverTransformer
+    else:
+        print(f"Invalid model specified: {args.model}, exiting.")
+        return 1
+    print(f"Using model {args.model}.")
+
+    policy_net = solver(env.observation_space.shape,
+                        env.action_space.n, args.device).to(args.device)
+    target_net = solver(env.observation_space.shape,
+                        env.action_space.n, args.device).to(args.device)
     optimizer = optim.AdamW(policy_net.parameters(),
                             lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
     memory = ReplayBuffer(args.memory_capacity)
@@ -1796,6 +1455,7 @@ def main() -> int:
     # Load a pre-trained model if specified
     if args.load_model:
         try:
+            # TODO: (when needed) we colud save model type to the checkpoint file and automatically load CORRECT --model type.
             print(f"Loading model and metadata from {args.load_model}...")
             checkpoint = torch.load(args.load_model, map_location=args.device)
             policy_net.load_state_dict(checkpoint['model_state_dict'])

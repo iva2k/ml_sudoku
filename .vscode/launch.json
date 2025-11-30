@@ -37,7 +37,7 @@
                 "--episodes", "200",
                 "--fixed_puzzle",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -52,7 +52,7 @@
                 "--save_model", "model_in_training.rewardshaping.zip",
                 "--episodes", "200",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -67,7 +67,7 @@
                 "--save_model", "model_in_training.masking.zip",
                 "--episodes", "200",
                 "--masking",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -83,7 +83,7 @@
                 "--episodes", "100",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -99,7 +99,7 @@
                 "--episodes", "400",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -115,7 +115,7 @@
                 "--episodes", "1000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -131,7 +131,23 @@
                 "--episodes", "4000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "10", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku 16000 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--load_model", "model_in_training.masking+rewardshaping.zip",
+                "--save_model", "model_in_training.masking+rewardshaping.zip",
+                "--episodes", "16000",
+                "--masking",
+                "--reward_shaping",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -147,7 +163,23 @@
                 "--episodes", "0",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "236", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku 50k --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--load_model", "model_transformer.zip",
+                "--save_model", "model_transformer.zip",
+                "--episodes", "50000",
+                "--masking",
+                "--reward_shaping",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
