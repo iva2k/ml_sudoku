@@ -39,6 +39,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from dqn_transformer import DQNSolver as DQNSolverTransformer
+
 # TODO: (when needed) Adjust these during Phase 3
 # Default Hyperparameters & Epsilon-greedy params (all can be changed from command line):
 GAMMA = 0.99
@@ -1652,10 +1654,15 @@ def main() -> int:
         reward_shaping=args.reward_shaping,
         fixed_puzzle=args.fixed_puzzle,
     )
-    policy_net = DQNSolver(env.observation_space.shape,
-                           env.action_space.n, args.device).to(args.device)
-    target_net = DQNSolver(env.observation_space.shape,
-                           env.action_space.n, args.device).to(args.device)
+    # policy_net = DQNSolver(env.observation_space.shape,
+    #                        env.action_space.n, args.device).to(args.device)
+    # target_net = DQNSolver(env.observation_space.shape,
+    #                        env.action_space.n, args.device).to(args.device)
+    # Use the new Transformer-based model
+    policy_net = DQNSolverTransformer(env.observation_space.shape,
+                                      env.action_space.n, args.device).to(args.device)
+    target_net = DQNSolverTransformer(env.observation_space.shape,
+                                      env.action_space.n, args.device).to(args.device)
     optimizer = optim.AdamW(policy_net.parameters(),
                             lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
     memory = ReplayBuffer(args.memory_capacity)
