@@ -57,7 +57,7 @@ ILLEGAL_ACTION_VALUE = -1e10
 
 # Dafault test settings:
 TEST_GAMES_REPEAT = 5
-TEST_DIFFICULTY_MIN = 6
+TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
 def _generate_initial_grid1() -> np.ndarray:
@@ -678,6 +678,54 @@ class DifficultyHistogram:
             total = solved + unsolved
             solve_rate = f"{(solved / total * 100):.1f}%" if total > 0 else "N/A"
             print(f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}")
+
+    def get_capability_score(self, use_best_100: bool = False) -> float:
+        """
+        Calculates a single numeric score representing the solver's capability.
+        - The integer part is the max difficulty (blanks) solved with 100% accuracy. If
+          `use_best_100` is False, this is the highest level in an unbroken chain of
+          100% solved difficulties starting from the easiest.
+        - The fractional part is a weighted average of solve rates for harder puzzles.
+        """
+        all_difficulties = sorted(set(self.solved_by_difficulty.keys()) | set(
+            self.unsolved_by_difficulty.keys()))
+        if not all_difficulties:
+            return 0.0
+
+        # 1. Find the integer part (max_100_diff)
+        max_100_diff = 0
+        if not use_best_100:
+            # Strict mode: Find highest difficulty in an unbroken 100% streak from the start
+            for blanks in all_difficulties:
+                if self.unsolved_by_difficulty.get(blanks, 0) == 0:
+                    max_100_diff = blanks  # This level is 100%, continue
+                else:
+                    break  # Streak is broken, stop here
+        else:
+            # Default mode: Find the absolute max difficulty with 100% solve rate
+            for blanks in all_difficulties:
+                if self.unsolved_by_difficulty.get(blanks, 0) == 0:
+                    max_100_diff = max(max_100_diff, blanks)
+
+        # 2. Calculate the fractional part for difficulties > max_100_diff
+        weighted_solve_rate_sum = 0.0
+        total_weight = 0.0
+        higher_difficulties = [d for d in all_difficulties if d > max_100_diff]
+
+        if higher_difficulties:
+            for blanks in higher_difficulties:
+                solved = self.solved_by_difficulty.get(blanks, 0)
+                unsolved = self.unsolved_by_difficulty.get(blanks, 0)
+                total = solved + unsolved
+                if total > 0:
+                    solve_rate = solved / total
+                    weight = blanks  # Weight by difficulty
+                    weighted_solve_rate_sum += solve_rate * weight
+                    total_weight += weight
+
+        fractional_part = (weighted_solve_rate_sum / total_weight) if total_weight > 0 else 0.0
+
+        return float(max_100_diff) + fractional_part
 
 
 class ResidualBlock(nn.Module):
@@ -1359,6 +1407,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
     histogram.log("Training Performance by Difficulty")
+    capability_score = histogram.get_capability_score()
+    print(f"Final Capability Score: {capability_score:.3f}")
 
     return 0
 
@@ -1511,6 +1561,8 @@ def test(args, env, policy_net) -> int:
         f"Total time: {duration_str} ({time_per_step_str} per step)",
     ]))
     histogram.log("Test Performance by Difficulty")
+    capability_score = histogram.get_capability_score()
+    print(f"Final Capability Score: {capability_score:.3f}")
 
     return 0
 
@@ -1528,6 +1580,8 @@ def parse_args():
                         help='Enable reward shaping (progress-based rewards).')
     parser.add_argument('--masking', action='store_true',
                         help='Enable action masking (only choose blank cells).')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for training reproducibility.')
     parser.add_argument('--fixed_puzzle', action='store_true',
                         help='Use only given puzzle for training.')
 
@@ -1565,6 +1619,8 @@ def parse_args():
                         help='Max blank cells for test puzzles.')
     parser.add_argument('--show_boards', action='store_true',
                         help='Show test puzzles and solutions.')
+    parser.add_argument('--test_seed', type=int, default=42,
+                        help='Random seed for test reproducibility.')
 
     # Model persistence
     parser.add_argument('--save_model', type=str, default=None,
@@ -1581,6 +1637,13 @@ def main() -> int:
     """Main function."""
 
     args, _parser = parse_args()
+
+    # Set random seeds for training reproducibility
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        print(f"Using random seed for training: {args.seed}")
 
     # Initialize Environment, Networks, Optimizer, and Memory
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1621,7 +1684,12 @@ def main() -> int:
 
         except FileNotFoundError:
             print(
-                f"Error: Model file not found at {args.load_model}. Starting from scratch.")
+                f"Error: Model file not found at \"{args.load_model}\". Starting from scratch.")
+            args.start_episode = 1
+            args.curriculum_level = 0
+            args.current_epsilon = args.eps_start
+        except Exception as e:
+            print(f"Error: {e} reading file \"{args.load_model}\". Starting from scratch.")
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
@@ -1645,6 +1713,13 @@ def main() -> int:
         if not rc:
             # Run the test phase if specified
             if args.test_games > 0:
+                if args.test_seed is not None:
+                    # Set random seeds for training reproducibility
+                    random.seed(args.test_seed)
+                    np.random.seed(args.test_seed)
+                    torch.manual_seed(args.test_seed)
+                    print(f"Using random seed for test: {args.test_seed}")
+
                 rc = test(args, env, policy_net)
     except Exception as e:
         # traceback.print_exc()
