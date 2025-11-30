@@ -267,50 +267,51 @@ def generate_legal_mask(grid: np.ndarray) -> np.ndarray:
 
 def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     """
-    Experimental GPU-accelerated version of generate_legal_mask.
-    This function performs the same logic using parallel tensor operations on the GPU.
+    Vectorized, GPU-accelerated version of generate_legal_mask.
+    Accepts a batch of grids (B, 9, 9) and returns a batch of masks (B, 729).
     """
+    is_batch = grid_tensor.dim() == 3
+    if not is_batch:
+        grid_tensor = grid_tensor.unsqueeze(0)  # Add batch dimension if not present
+
+    b_size = grid_tensor.shape[0]
     _device = grid_tensor.device
 
-    # 1. Create a (9, 9, 9) tensor where `used_digits[r, c, d-1]` is true if digit `d` is used
-    # in the row, column, or box corresponding to cell (r, c).
-
-    # One-hot encode the grid: (9, 9, 10) -> (9, 9, 9) for digits 1-9
+    # One-hot encode the grid batch: (B, 9, 9, 10) -> (B, 9, 9, 9) for digits 1-9
     one_hot = torch.nn.functional.one_hot(
-        grid_tensor.long(), num_classes=10)[:, :, 1:].bool()
+        grid_tensor.long(), num_classes=10)[:, :, :, 1:].bool()
 
-    # Row and column used digits: (9, 9) booleans for each digit
-    row_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1)
-    col_used = one_hot.any(dim=0, keepdim=True).expand(9, -1, -1)
+    # Row and column used digits: (B, 9, 9, 9)
+    row_used = one_hot.any(dim=2, keepdim=True).expand(-1, -1, 9, -1)
+    col_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1, -1)
 
     # Box used digits: Reshape and check
-    box_used = one_hot.view(3, 3, 3, 3, 9).any(dim=(1, 3), keepdim=True)
-    box_used = box_used.expand(3, 3, 3, 3, 9).reshape(9, 9, 9)
+    box_used = one_hot.view(b_size, 3, 3, 3, 3, 9).any(dim=(2, 4), keepdim=True)
+    box_used = box_used.expand(b_size, 3, 3, 3, 3, 9).reshape(b_size, 9, 9, 9)
 
-    # Combine all used digits. `used_mask[r, c, d-1]` is true if d is NOT a valid digit for (r,c)
     used_mask = row_used | col_used | box_used
 
-    # 2. Create a mask for empty cells. `empty_mask[r, c]` is true if the cell is empty.
-    empty_mask = grid_tensor == 0
+    empty_mask = (grid_tensor == 0).unsqueeze(3)  # (B, 9, 9, 1)
+    legal_mask_4d = empty_mask & ~used_mask
 
-    # 3. The final legal mask is where a cell is empty AND the digit is NOT used.
-    # We expand empty_mask to match the shape of used_mask.
-    legal_mask_3d = empty_mask.unsqueeze(2) & ~used_mask
-    return legal_mask_3d.view(-1)  # Flatten to 729
+    final_mask = legal_mask_4d.view(b_size, -1)  # Flatten to (B, 729)
+    return final_mask if is_batch else final_mask.squeeze(0)
 
 
 def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
-    """Converts a 9x9 grid of 0-9 values to a 10x9x9 one-hot encoded tensor on the given device."""
-    # Ensure grid is integer type for indexing
+    """
+    Vectorized. Converts a batch of grids (B, 9, 9) or a single grid (9,9)
+    to a one-hot encoded tensor (B, 10, 9, 9) on the given device.
+    """
+    is_batch = grid.ndim == 3
+    if not is_batch:
+        grid = grid[np.newaxis, :, :]  # Add batch dimension
+
     grid_long = torch.from_numpy(grid.astype(np.int64)).to(device)
-    # Create a 10x9x9 tensor of zeros
-    one_hot = torch.zeros((10, 9, 9), dtype=torch.float32, device=device)
-    # Use advanced indexing to set the '1's.
-    rows, cols = torch.meshgrid(torch.arange(
-        9, device=device), torch.arange(9, device=device), indexing='ij')
-    one_hot[grid_long, rows, cols] = 1
-    # The result is already on the correct device
-    return one_hot
+    one_hot = torch.nn.functional.one_hot(
+        grid_long, num_classes=10).permute(0, 3, 1, 2).float()
+
+    return one_hot if is_batch else one_hot.squeeze(0)
 
 
 # State/action transition data structure for the Replay Buffer
@@ -823,9 +824,10 @@ def optimize_model(
         tuple(not d for d in batch.done), dtype=torch.bool)
 
     device = policy_net.device
-    # Convert all states in the batch to one-hot encoding
-    state_batch = torch.stack(
-        [state_to_one_hot(s.numpy(), device) for s in batch.state]
+    # Vectorized conversion of all states in the batch to one-hot encoding
+    state_batch = state_to_one_hot(
+        np.stack([s.numpy() for s in batch.state]),
+        device
     )
     action_batch = torch.tensor(
         batch.action, device=device).unsqueeze(1)  # [B, 1]
@@ -843,8 +845,8 @@ def optimize_model(
     if non_final_mask.any():
         non_final_next_states_np = [s for s, done in zip(
             batch.next_state, batch.done) if not done]
-        non_final_next_states_t = torch.stack(
-            [state_to_one_hot(s.numpy(), device) for s in non_final_next_states_np])
+        non_final_next_states_t = state_to_one_hot(
+            np.stack([s.numpy() for s in non_final_next_states_np]), device)
 
         with torch.no_grad():
             target_q_values = target_net(non_final_next_states_t)
@@ -855,8 +857,7 @@ def optimize_model(
                 non_final_next_states_gpu = torch.stack(
                     non_final_next_states_np).to(device)
                 # Generate masks for the entire batch on the GPU
-                masks_t = torch.stack([generate_legal_mask_gpu(s)
-                                      for s in non_final_next_states_gpu])
+                masks_t = generate_legal_mask_gpu(non_final_next_states_gpu)
 
                 # Avoid in-place modification of target_q_values.
                 # Create an additive mask instead of modifying the tensor directly.
