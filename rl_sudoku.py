@@ -62,6 +62,7 @@ TEST_GAMES_REPEAT = 5
 TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
+
 def _generate_initial_grid1() -> np.ndarray:
     """Generates a complete, solved Sudoku grid using a randomized backtracking algorithm."""
     grid = np.zeros((9, 9), dtype=np.int32)
@@ -725,7 +726,8 @@ class DifficultyHistogram:
                     weighted_solve_rate_sum += solve_rate * weight
                     total_weight += weight
 
-        fractional_part = (weighted_solve_rate_sum / total_weight) if total_weight > 0 else 0.0
+        fractional_part = (weighted_solve_rate_sum /
+                           total_weight) if total_weight > 0 else 0.0
 
         return float(max_100_diff) + fractional_part
 
@@ -754,6 +756,33 @@ class ResidualBlock(nn.Module):
 class DQNSolver1(nn.Module):
     """
     The Deep Q-Network. Takes the 9x9 grid state and outputs Q-values for 729 actions.
+
+    1. Analysis of the DQNSolver1 Architecture
+
+    DQNSolver1 is a classic Deep Convolutional Neural Network (CNN) architecture, similar to what one might use for image classification tasks. It's built using standard, well-understood components:
+
+       * **Initial Convolution**: It starts with a Conv2d layer that takes the 10-channel one-hot encoded input and transforms it into 128 feature maps. The kernel size is 3x3 with padding, which is a standard choice for preserving the 9x9 spatial dimensions while extracting local features.
+       * **Residual Blocks**: The core of the network consists of three ResidualBlocks. Each block contains two 3x3 convolutional layers. The "residual connection" (adding the input of the block to its output) is a powerful technique borrowed from ResNet architectures. It helps in training deeper networks by allowing gradients to flow more easily, preventing the "vanishing gradient" problem. This allows the network to build up more complex feature representations layer by layer.
+       * **Final Convolution and Flattening**: After the residual blocks, another convolutional layer processes the features, which are then flattened from a 2D grid of features (128 x 9 x 9) into a single long vector.
+       * **Fully Connected Head**: This flattened vector is passed through two dense (Linear) layers, which ultimately produce the final 729 Q-values, one for each possible action (cell + digit).
+
+    In essence, DQNSolver1 treats the Sudoku grid as a small 9x9 image with 10 channels and uses a standard deep learning approach to find patterns in it.
+
+    2. Critique of Its Weaknesses
+
+    While this architecture is powerful for general-purpose image analysis, it has significant weaknesses when applied to the specific, logical structure of Sudoku. Its main drawback is a mismatch between the network's inductive bias and the problem's domain logic.
+
+       1. Lack of Sudoku-Specific Inductive Bias: The network's primary tool is the 3x3 convolution. A 3x3 kernel is a local feature detector. It's designed to find patterns among a cell and its 8 immediate neighbors. However, Sudoku rules are not local in this way. A cell is constrained by 20 other cells spread across its entire row, its entire column, and its 3x3 box.
+
+          * For a 3x3 kernel at cell (4,4) to "see" the value at cell (4,8) at the end of the row, the information must be passed through multiple convolutional layers. This is a very indirect and inefficient way to learn the fundamental rule "no two same numbers in a row."
+          * The model has no built-in understanding of rows, columns, or non-overlapping boxes. It must learn these geometric concepts from scratch, which is a difficult task for a generic CNN.
+
+       2. **Inefficient Information Aggregation**: Because the architecture relies on stacking local kernels, it struggles with long-range dependencies. The ResidualBlocks create a deep network, which in theory gives it a larger "receptive field" (the area of the input that can influence a single output feature). However, it's still a brute-force way to achieve the global information sharing that Sudoku requires. The network has to expend a lot of its capacity just to learn how to gather information from the correct cells, leaving less capacity for actual logical reasoning.
+
+       3. **"Where" and "What" are Conflated**: Similar to the other CNN-based models, the final output is a single flat vector of 729 actions. The network must learn a complex mapping from its grid-based features to this unstructured action space. This makes it difficult to learn cell-specific properties versus digit-specific properties, as the two concepts are entangled in the final output layer.
+
+    In summary, DQNSolver1 is a powerful but generic tool. It's like giving a carpenter a high-end sledgehammer for a task that requires a precision screwdriver. It might eventually get the job done for very simple puzzles by sheer force (i.e., memorizing patterns), but it lacks the architectural finesse to learn the explicit, rule-based, long-range reasoning needed for advanced Sudoku. The DQNSolver (with SudokuConstraintConv) and the DQNSolverTransformer are significant improvements because their architectures are explicitly designed to respect the row, column, and box geometry of the game.
+
     """
 
     def __init__(self, _input_shape, output_size, device=None):
@@ -928,7 +957,7 @@ class DQNSolver(nn.Module):
     * **Overall Flow**: The model perceives constraints, "thinks" about them with reasoning blocks, perceives them again, and then makes a decision via a fully connected head.
 
     2. Critique of Its Weaknesses
-    
+
     Despite the thoughtful design, there are fundamental architectural limitations that prevent it from learning the complex, chained logic required for difficult Sudoku puzzles.
 
        1. Limited Information Flow (The Core Problem): The ReasoningBlock operates on each cell in isolation. It can see the features for its own row, column, and box, but it cannot see the features of other cells. A difficult Sudoku requires reasoning like:
@@ -1549,9 +1578,11 @@ def test(args, env, policy_net) -> int:
             f"\n2. Testing on {num_generated_games} generated puzzles "
             f"(Difficulty: {args.test_difficulty_min}-{args.test_difficulty_max})..."
         )
-        diff_slope = (1 + args.test_difficulty_max - args.test_difficulty_min) / num_generated_games
+        diff_slope = (1 + args.test_difficulty_max -
+                      args.test_difficulty_min) / num_generated_games
         for i_game in range(1, num_generated_games+1):
-            difficulty = args.test_difficulty_min + math.floor( (i_game - 1) * diff_slope )
+            difficulty = args.test_difficulty_min + \
+                math.floor((i_game - 1) * diff_slope)
             num_clues = 81 - difficulty
             state, _ = env.reset(options={"num_clues": num_clues})
             is_solved, final_reward, steps = run_test_episode(
@@ -1635,7 +1666,8 @@ def parse_args():
                         help='Log info once every N episodes.')
 
     # Testing arguments
-    default_test_games = (TEST_DIFFICULTY_MAX-TEST_DIFFICULTY_MIN+1)*TEST_GAMES_REPEAT
+    default_test_games = (TEST_DIFFICULTY_MAX -
+                          TEST_DIFFICULTY_MIN+1)*TEST_GAMES_REPEAT
     parser.add_argument('--test_games', type=int, default=default_test_games,
                         help='Number of games to test after training.')
     parser.add_argument('--test_difficulty_min', type=int, default=TEST_DIFFICULTY_MIN,
@@ -1719,7 +1751,8 @@ def main() -> int:
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
         except Exception as e:
-            print(f"Error: {e} reading file \"{args.load_model}\". Starting from scratch.")
+            print(
+                f"Error: {e} reading file \"{args.load_model}\". Starting from scratch.")
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
