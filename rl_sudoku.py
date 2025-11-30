@@ -298,12 +298,14 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
 
 def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
     """Converts a 9x9 grid of 0-9 values to a 10x9x9 one-hot encoded tensor on the given device."""
+    # Ensure grid is integer type for indexing
+    grid_long = torch.from_numpy(grid.astype(np.int64)).to(device)
     # Create a 10x9x9 tensor of zeros
     one_hot = torch.zeros((10, 9, 9), dtype=torch.float32, device=device)
     # Use advanced indexing to set the '1's.
-    # For each cell (r, c), the value grid[r, c] determines the channel.
-    rows, cols = np.indices((9, 9))
-    one_hot[grid, rows, cols] = 1
+    rows, cols = torch.meshgrid(torch.arange(
+        9, device=device), torch.arange(9, device=device), indexing='ij')
+    one_hot[grid_long, rows, cols] = 1
     # The result is already on the correct device
     return one_hot
 
@@ -426,7 +428,7 @@ class SudokuEnv(gym.Env):
         self.rewarded_cols = set()
         self.rewarded_boxes = set()
 
-        observation = self.current_grid.astype(np.float32)
+        observation = self.current_grid  # Return as int32
         return observation, self.episode_stats
 
     def step(self, action):
@@ -474,7 +476,7 @@ class SudokuEnv(gym.Env):
                 truncated = True
 
         # State is returned as float32 for PyTorch compatibility
-        observation = self.current_grid.astype(np.float32)
+        observation = self.current_grid  # Return as int32
         info = {"current_reward": reward}
 
         return observation, reward, terminated, truncated, info
@@ -759,29 +761,71 @@ class DQNSolver1(nn.Module):
 
     1. Analysis of the DQNSolver1 Architecture
 
-    DQNSolver1 is a classic Deep Convolutional Neural Network (CNN) architecture, similar to what one might use for image classification tasks. It's built using standard, well-understood components:
+    DQNSolver1 is a classic Deep Convolutional Neural Network (CNN) architecture, similar to what
+    one might use for image classification tasks. It's built using standard, well-understood
+    components:
 
-       * **Initial Convolution**: It starts with a Conv2d layer that takes the 10-channel one-hot encoded input and transforms it into 128 feature maps. The kernel size is 3x3 with padding, which is a standard choice for preserving the 9x9 spatial dimensions while extracting local features.
-       * **Residual Blocks**: The core of the network consists of three ResidualBlocks. Each block contains two 3x3 convolutional layers. The "residual connection" (adding the input of the block to its output) is a powerful technique borrowed from ResNet architectures. It helps in training deeper networks by allowing gradients to flow more easily, preventing the "vanishing gradient" problem. This allows the network to build up more complex feature representations layer by layer.
-       * **Final Convolution and Flattening**: After the residual blocks, another convolutional layer processes the features, which are then flattened from a 2D grid of features (128 x 9 x 9) into a single long vector.
-       * **Fully Connected Head**: This flattened vector is passed through two dense (Linear) layers, which ultimately produce the final 729 Q-values, one for each possible action (cell + digit).
+       * **Initial Convolution**: It starts with a Conv2d layer that takes the 10-channel one-hot
+          encoded input and transforms it into 128 feature maps. The kernel size is 3x3 with
+          padding, which is a standard choice for preserving the 9x9 spatial dimensions while
+          extracting local features.
+       * **Residual Blocks**: The core of the network consists of three ResidualBlocks. Each block
+         contains two 3x3 convolutional layers. The "residual connection" (adding the input of the
+         block to its output) is a powerful technique borrowed from ResNet architectures. It helps
+         in training deeper networks by allowing gradients to flow more easily, preventing the
+         "vanishing gradient" problem. This allows the network to build up more complex feature
+         representations layer by layer.
+       * **Final Convolution and Flattening**: After the residual blocks, another convolutional
+         layer processes the features, which are then flattened from a 2D grid of features
+         (128 x 9 x 9) into a single long vector.
+       * **Fully Connected Head**: This flattened vector is passed through two dense (Linear)
+         layers, which ultimately produce the final 729 Q-values, one for each possible action
+         (cell + digit).
 
-    In essence, DQNSolver1 treats the Sudoku grid as a small 9x9 image with 10 channels and uses a standard deep learning approach to find patterns in it.
+    In essence, DQNSolver1 treats the Sudoku grid as a small 9x9 image with 10 channels and uses
+    a standard deep learning approach to find patterns in it.
 
     2. Critique of Its Weaknesses
 
-    While this architecture is powerful for general-purpose image analysis, it has significant weaknesses when applied to the specific, logical structure of Sudoku. Its main drawback is a mismatch between the network's inductive bias and the problem's domain logic.
+    While this architecture is powerful for general-purpose image analysis, it has significant
+    weaknesses when applied to the specific, logical structure of Sudoku. Its main drawback is a
+    mismatch between the network's inductive bias and the problem's domain logic.
 
-       1. Lack of Sudoku-Specific Inductive Bias: The network's primary tool is the 3x3 convolution. A 3x3 kernel is a local feature detector. It's designed to find patterns among a cell and its 8 immediate neighbors. However, Sudoku rules are not local in this way. A cell is constrained by 20 other cells spread across its entire row, its entire column, and its 3x3 box.
+       1. Lack of Sudoku-Specific Inductive Bias: The network's primary tool is the 3x3
+          convolution. A 3x3 kernel is a local feature detector. It's designed to find patterns
+          among a cell and its 8 immediate neighbors. However, Sudoku rules are not local in this
+          way. A cell is constrained by 20 other cells spread across its entire row, its entire
+          column, and its 3x3 box.
 
-          * For a 3x3 kernel at cell (4,4) to "see" the value at cell (4,8) at the end of the row, the information must be passed through multiple convolutional layers. This is a very indirect and inefficient way to learn the fundamental rule "no two same numbers in a row."
-          * The model has no built-in understanding of rows, columns, or non-overlapping boxes. It must learn these geometric concepts from scratch, which is a difficult task for a generic CNN.
+          * For a 3x3 kernel at cell (4,4) to "see" the value at cell (4,8) at the end of the row,
+            the information must be passed through multiple convolutional layers. This is a very
+            indirect and inefficient way to learn the fundamental rule "no two same numbers in a
+            row."
+          * The model has no built-in understanding of rows, columns, or non-overlapping boxes. It
+            must learn these geometric concepts from scratch, which is a difficult task for a
+            generic CNN.
 
-       2. **Inefficient Information Aggregation**: Because the architecture relies on stacking local kernels, it struggles with long-range dependencies. The ResidualBlocks create a deep network, which in theory gives it a larger "receptive field" (the area of the input that can influence a single output feature). However, it's still a brute-force way to achieve the global information sharing that Sudoku requires. The network has to expend a lot of its capacity just to learn how to gather information from the correct cells, leaving less capacity for actual logical reasoning.
+       2. **Inefficient Information Aggregation**: Because the architecture relies on stacking
+          local kernels, it struggles with long-range dependencies. The ResidualBlocks create a
+          deep network, which in theory gives it a larger "receptive field" (the area of the input
+          that can influence a single output feature). However, it's still a brute-force way to
+          achieve the global information sharing that Sudoku requires. The network has to expend a
+          lot of its capacity just to learn how to gather information from the correct cells,
+          leaving less capacity for actual logical reasoning.
 
-       3. **"Where" and "What" are Conflated**: Similar to the other CNN-based models, the final output is a single flat vector of 729 actions. The network must learn a complex mapping from its grid-based features to this unstructured action space. This makes it difficult to learn cell-specific properties versus digit-specific properties, as the two concepts are entangled in the final output layer.
+       3. **"Where" and "What" are Conflated**: Similar to the other CNN-based models, the final
+          output is a single flat vector of 729 actions. The network must learn a complex mapping
+          from its grid-based features to this unstructured action space. This makes it difficult
+          to learn cell-specific properties versus digit-specific properties, as the two concepts
+          are entangled in the final output layer.
 
-    In summary, DQNSolver1 is a powerful but generic tool. It's like giving a carpenter a high-end sledgehammer for a task that requires a precision screwdriver. It might eventually get the job done for very simple puzzles by sheer force (i.e., memorizing patterns), but it lacks the architectural finesse to learn the explicit, rule-based, long-range reasoning needed for advanced Sudoku. The DQNSolver (with SudokuConstraintConv) and the DQNSolverTransformer are significant improvements because their architectures are explicitly designed to respect the row, column, and box geometry of the game.
+    In summary, DQNSolver1 is a powerful but generic tool. It's like giving a carpenter a high-end
+    sledgehammer for a task that requires a precision screwdriver. It might eventually get the job
+    done for very simple puzzles by sheer force (i.e., memorizing patterns), but it lacks the
+    architectural finesse to learn the explicit, rule-based, long-range reasoning needed for
+    advanced Sudoku. The DQNSolver (with SudokuConstraintConv) and the DQNSolverTransformer are
+    significant improvements because their architectures are explicitly designed to respect the
+    row, column, and box geometry of the game.
 
     """
 
@@ -1341,12 +1385,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 done = terminated or truncated
 
                 # 5. Store the transition in the replay memory
-                # Convert numpy arrays to tensors for storage
-                state_tensor = torch.from_numpy(state).float()  # Stored on CPU
-                next_state_tensor = torch.from_numpy(
-                    next_state).float()  # Stored on CPU
+                # Store state as integer tensors on CPU
+                state_t = torch.from_numpy(state).int()
+                next_state_t = torch.from_numpy(next_state).int()
                 transition = Transition(
-                    state_tensor, action, reward, next_state_tensor, done, i_episode)
+                    state_t, action, reward, next_state_t, done, i_episode)
                 memory.push(*transition)
                 # Also store for potential end-of-episode training
                 episode_transitions.append(transition)
