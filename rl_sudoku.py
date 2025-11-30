@@ -825,9 +825,10 @@ def optimize_model(
 
     device = policy_net.device
     # Vectorized conversion of all states in the batch to one-hot encoding
+    # Directly stack tensors from the buffer, avoiding slow list comprehensions and numpy conversions.
+    state_batch_tensors = torch.stack(batch.state).to(device)
     state_batch = state_to_one_hot(
-        np.stack([s.numpy() for s in batch.state]),
-        device
+        state_batch_tensors.cpu().numpy(), device
     )
     action_batch = torch.tensor(
         batch.action, device=device).unsqueeze(1)  # [B, 1]
@@ -845,17 +846,14 @@ def optimize_model(
     if non_final_mask.any():
         non_final_next_states_np = [s for s, done in zip(
             batch.next_state, batch.done) if not done]
+        non_final_next_states_gpu = torch.stack(non_final_next_states_np).to(device)
         non_final_next_states_t = state_to_one_hot(
-            np.stack([s.numpy() for s in non_final_next_states_np]), device)
+            non_final_next_states_gpu.cpu().numpy(), device)
 
         with torch.no_grad():
             target_q_values = target_net(non_final_next_states_t)
 
             if use_masking:
-                # Generate and apply mask to target Q-values
-                # Convert numpy states to a batch of tensors on the GPU for accelerated masking
-                non_final_next_states_gpu = torch.stack(
-                    non_final_next_states_np).to(device)
                 # Generate masks for the entire batch on the GPU
                 masks_t = generate_legal_mask_gpu(non_final_next_states_gpu)
 
