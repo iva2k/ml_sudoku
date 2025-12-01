@@ -1192,16 +1192,12 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             q_values = policy_net(one_hot_state)
 
             if args.masking:
-                # During testing, state is a numpy array, so we use the CPU version.
-                mask = generate_legal_mask(state)
-                if not np.any(mask):
+                # Use the GPU-accelerated version for masking.
+                mask_t = generate_legal_mask_gpu(state_t)
+                if not mask_t.any():
                     break  # No legal moves left
-                mask_tensor = torch.from_numpy(mask).to(args.device)
-                additive_mask = torch.where(
-                    mask_tensor,
-                    torch.tensor(0.0, device=args.device),
-                    torch.tensor(ILLEGAL_ACTION_VALUE, device=args.device)
-                ).unsqueeze(0)
+                
+                additive_mask = torch.where(mask_t, 0.0, ILLEGAL_ACTION_VALUE).unsqueeze(0)
                 action = (q_values + additive_mask).argmax().item()
             else:
                 action = q_values.argmax().item()
