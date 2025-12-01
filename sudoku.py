@@ -61,38 +61,47 @@ class Sudoku:
                     count += 1
         return count
 
-    def next_box(self, board, row = None, col = None):
+    def next_box(self, board: np.ndarray, row: int = None, col: int = None):
+        """
+        Finds the next empty cell (0) on the board.
+        - If row/col are None, finds the very first empty cell.
+        - If row/col are provided, finds the first empty cell after (row, col).
+        Returns a (row, col) tuple or False if no empty cells are found.
+        """
         board = self.str_to_arr(board) if isinstance(board, str) else board
-        if row is not None and col is not None:
-            if col == 8:
-                if row == 8:
-                    return False
-                row += 1
-                col = 0
-            else:
-                col += 1
-        for r in (range(9) if row is None else range(row, 9)):
-            for c in (range(9) if col is None or r > row else range(col, 9)):
-                if board[r][c] == 0:
-                    return (r, c)
+
+        empty_cells = np.argwhere(board == 0)
+        if empty_cells.size == 0:
+            return False
+
+        if row is None: # Find the first empty cell on the board
+            return tuple(empty_cells[0])
+
+        # Find the first empty cell *after* the given (row, col)
+        current_pos_flat = row * 9 + col
+        for r, c in empty_cells:
+            if r * 9 + c > current_pos_flat:
+                return (r, c)
         return False
 
-    def possible(self, board, row, col, n):
+    def possible(self, board: np.ndarray, row: int, col: int, n: int) -> bool:
+        """
+        Optimized check to see if placing number 'n' at (row, col) is valid.
+        Assumes the board is a NumPy array and the cell at (row, col) is currently 0.
+        """
         board = self.str_to_arr(board) if isinstance(board, str) else board
-        for i in range(9):
-            if board[row][i] == n and col != i:
-                return False
-            if board[i][col] == n and row != i:
-                return False
-        row0 = row // 3
-        col0 = col // 3
-        for i in range(3):
-            for j in range(3):
-                if board[row0*3 + i][col0*3 + j] == n and (row0*3 + i,col0*3 + j) != (row,col):
-                    return False
+        # Check if 'n' is already in the same row or column
+        if np.any(board[row, :] == n) or np.any(board[:, col] == n):
+            return False
+
+        # Check 3x3 subgrid
+        start_row, start_col = 3 * (row // 3), 3 * (col // 3)
+        if np.any(board[start_row:start_row + 3, start_col:start_col + 3] == n):
+            return False
         return True
 
     def solve_brute(self, board):
+        """Solves the Sudoku puzzle using backtracking."""
         board = self.str_to_arr(board) if isinstance(board, str) else board
         blank_cell = self.next_box(board)
         if blank_cell is False:
@@ -104,7 +113,7 @@ class Sudoku:
                 result = self.solve_brute(board)
                 if result is not False:
                     return result
-            board[row][col] = 0
+            board[row][col] = 0  # Backtrack
         return False
 
     def count_solutions(self, board, count_limit=2):
