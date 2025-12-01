@@ -146,6 +146,10 @@ class Sudoku:
     def count_solutions(self, board: BoardOrStr, count_limit: int=2) -> int:
         """Counts the number of solutions for a board up to a limit using backtracking."""
         board = self.str_to_arr(board) if isinstance(board, str) else board
+        return self._count_solutions(board, count_limit)
+
+    def _count_solutions(self, board: Board, count_limit: int=2) -> int:
+        """Counts the number of solutions for a board up to a limit using backtracking."""
         count = 0
 
         def _solve():
@@ -157,7 +161,6 @@ class Sudoku:
 
             row, col = blank_cell
             vals = self.all_possible(board, row, col)
-
             for n in vals:
                 board[row][col] = n
                 if _solve():
@@ -240,7 +243,7 @@ class Sudoku:
 
 def main():
     """Main function to run the Sudoku solver."""
-    num_iter = 1000
+    num_iter = 100
     s = Sudoku('000308600302400058005020071586000400000007002090140000403096105001280006070000030', '719358624362471958845629371586932417134867592297145863423796185951283746678514239')
     # s = Sudoku('000260701680070090190004500820100040004602900050003028009300074040050036703018000', '435269781682571493197834562826195347374682915951743628519326874248957136763418259')
     s.solver(s.quiz, s.solve_brute, num_iter)
@@ -249,6 +252,14 @@ def main():
     print('Known solution:')
     s.print(s.solution)
 
+    start_time = timer()
+    for _i in range(num_iter):
+        count = s.count_solutions(s.quiz)
+    end_time = timer()
+    elapsed_time = (end_time - start_time)
+    elapsed_time = elapsed_time / num_iter 
+    time_str = str(timedelta(seconds=elapsed_time))
+    print(f"Number of solutions for quiz: {count}, found in {time_str}")
 
 if __name__ == "__main__":
     main()
