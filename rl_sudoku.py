@@ -298,18 +298,18 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     return final_mask if is_batch else final_mask.squeeze(0)
 
 
-def state_to_one_hot(grid: np.ndarray, device: torch.device) -> torch.Tensor:
+def state_to_one_hot(grid_tensor: torch.Tensor) -> torch.Tensor:
     """
-    Vectorized. Converts a batch of grids (B, 9, 9) or a single grid (9,9)
+    Vectorized. Converts a batch of grid tensors (B, 9, 9) or a single grid tensor (9,9)
     to a one-hot encoded tensor (B, 10, 9, 9) on the given device.
+    Assumes input tensor is already on the correct device.
     """
-    is_batch = grid.ndim == 3
+    is_batch = grid_tensor.dim() == 3
     if not is_batch:
-        grid = grid[np.newaxis, :, :]  # Add batch dimension
+        grid_tensor = grid_tensor.unsqueeze(0)  # Add batch dimension
 
-    grid_long = torch.from_numpy(grid.astype(np.int64)).to(device)
     one_hot = torch.nn.functional.one_hot(
-        grid_long, num_classes=10).permute(0, 3, 1, 2).float()
+        grid_tensor.long(), num_classes=10).permute(0, 3, 1, 2).float()
 
     return one_hot if is_batch else one_hot.squeeze(0)
 
@@ -773,14 +773,13 @@ def get_action(
         # Exploit: Choose the action with the highest predicted Q-value
         with torch.no_grad():
             # Add batch dimension and get Q-values
-            one_hot_state = state_to_one_hot(
-                state, policy_net.device).unsqueeze(0)
+            state_t = torch.from_numpy(state).to(policy_net.device)
+            one_hot_state = state_to_one_hot(state_t).unsqueeze(0)
             q_values = policy_net(one_hot_state)
 
             if use_masking:
                 # Apply mask: set Q-values of illegal actions to a very small number
                 # Transfer state to GPU and generate mask on GPU
-                state_t = torch.from_numpy(state).to(policy_net.device)
                 mask_t = generate_legal_mask_gpu(state_t)
 
                 masked_q = q_values.clone()
@@ -827,9 +826,7 @@ def optimize_model(
     # Vectorized conversion of all states in the batch to one-hot encoding
     # Directly stack tensors from the buffer, avoiding slow list comprehensions and numpy conversions.
     state_batch_tensors = torch.stack(batch.state).to(device)
-    state_batch = state_to_one_hot(
-        state_batch_tensors.cpu().numpy(), device
-    )
+    state_batch = state_to_one_hot(state_batch_tensors)
     action_batch = torch.tensor(
         batch.action, device=device).unsqueeze(1)  # [B, 1]
     reward_batch = torch.tensor(
@@ -847,8 +844,7 @@ def optimize_model(
         non_final_next_states_np = [s for s, done in zip(
             batch.next_state, batch.done) if not done]
         non_final_next_states_gpu = torch.stack(non_final_next_states_np).to(device)
-        non_final_next_states_t = state_to_one_hot(
-            non_final_next_states_gpu.cpu().numpy(), device)
+        non_final_next_states_t = state_to_one_hot(non_final_next_states_gpu)
 
         with torch.no_grad():
             target_q_values = target_net(non_final_next_states_t)
@@ -1190,7 +1186,8 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
 
     for _step in range(81):  # Max 81 steps
         with torch.no_grad():
-            one_hot_state = state_to_one_hot(state, args.device).unsqueeze(0)
+            state_t = torch.from_numpy(state).to(args.device)
+            one_hot_state = state_to_one_hot(state_t).unsqueeze(0)
             q_values = policy_net(one_hot_state)
 
             if args.masking:
