@@ -218,3 +218,15 @@ The key components of the optimized pipeline are:
 4. **GPU-Based Filtering:** The process of filtering out terminal `next_state` values was moved from a CPU-based Python loop to a single, highly optimized boolean indexing operation performed directly on the GPU.
 
 These changes ensure that the entire batch processing pipeline - from sampling the replay buffer to calculating the loss - stays on the GPU, maximizing utilization and allowing the training loop to keep pace with the GPU's computational speed.
+
+### Asynchronous Puzzle Generation
+
+A significant performance bottleneck emerged from the need to generate and validate puzzles on-demand, especially the check for a unique solution, which is a CPU-intensive backtracking task. This caused the highly optimized GPU training pipeline to stall while waiting for the CPU.
+
+To solve this, an **asynchronous puzzle generation** system was implemented using Python's `multiprocessing` module.
+
+1. **Worker Processes:** A pool of background worker processes is spawned, with each worker running on a separate CPU core.
+2. **Producer-Consumer Queue:** Workers continuously generate puzzles with random difficulty picked from currently set range, validate them for uniqueness, and place the valid puzzles into a shared queue.
+3. **Dynamic Difficulty:** The main training process communicates the desired difficulty (number of clues) to the workers via shared memory (`multiprocessing.Value`). This allows the training curriculum to dynamically request harder or easier puzzles without interrupting the generation flow.
+
+This architecture effectively parallelizes the workload, using idle CPU cores to prepare high-quality training data in advance, ensuring the GPU is never left waiting and maximizing hardware utilization.

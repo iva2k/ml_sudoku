@@ -38,11 +38,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import multiprocessing as mp
 
 from dqn_cnn1 import DQNSolverCNN1
 from dqn_cnn2 import DQNSolverCNN2
 from dqn_cnn3 import DQNSolverCNN3
 from dqn_transformer import DQNSolver as DQNSolverTransformer
+
+from sudoku import Sudoku as SudokuValidator
 
 # TODO: (when needed) Adjust these during Phase 3
 # Default Hyperparameters & Epsilon-greedy params (all can be changed from command line):
@@ -64,6 +67,97 @@ ILLEGAL_ACTION_VALUE = -1e10
 TEST_GAMES_REPEAT = 5
 TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
+
+def _get_unique_puzzle(
+    validator: SudokuValidator,
+    solution,
+    num_clues: int,
+    max_tries: int = 1000
+) -> np.ndarray:
+    tries = 0
+    while tries < max_tries:
+        puzzle = _clue_grid(solution, num_clues)
+        # Check for a unique solution
+        if validator.count_solutions(puzzle.copy()) == 1:
+            return puzzle
+        tries += 1
+        if tries > 10:
+            print(f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
+    raise RuntimeError(f"Unable to find a {num_clues} clues puzzle with a unique solution after {max_tries} tries.")
+
+def _puzzle_worker(
+    queue: mp.Queue,
+    stop_event: mp.Event,
+    min_clues_shared: mp.Value,
+    max_clues_shared: mp.Value
+):
+    """Worker process to generate valid Sudoku puzzles."""
+    validator = SudokuValidator()
+    while not stop_event.is_set():
+        if queue.qsize() > 50:  # Don't overfill the queue
+            time.sleep(0.1)
+            continue
+
+        # Read the current difficulty from shared memory
+        min_clues = min_clues_shared.value
+        max_clues = max_clues_shared.value
+
+        solution = _generate_initial_grid()
+        num_clues = random.randint(min_clues, max_clues)
+        puzzle = _get_unique_puzzle(validator, solution, num_clues)
+        queue.put((puzzle, solution, num_clues))
+
+
+class PuzzleGenerator:
+    """Manages a pool of worker processes to generate puzzles asynchronously."""
+
+    def __init__(self, num_workers: int, initial_min_clues: int = 1, initial_max_clues: int = 35):
+        self.num_workers = num_workers
+        # Use shared memory for dynamic difficulty updates
+        self.min_clues = mp.Value('i', initial_min_clues)
+        self.max_clues = mp.Value('i', initial_max_clues)
+        self.puzzle_queue = mp.Queue(maxsize=100)
+        self.stop_event = mp.Event()
+        self.workers: List[mp.Process] = []
+
+    def start(self):
+        """Starts the worker processes."""
+        print(f"Starting {self.num_workers} puzzle generator workers...")
+        for _ in range(self.num_workers):
+            p = mp.Process(target=_puzzle_worker, args=(
+                self.puzzle_queue,
+                self.stop_event,
+                self.min_clues,
+                self.max_clues
+            ))
+            p.start()
+            self.workers.append(p)
+
+    def stop(self):
+        """Stops all worker processes."""
+        print("Stopping puzzle generator workers...")
+        self.stop_event.set()
+        # Clear the queue to unblock workers if they are waiting
+        while not self.puzzle_queue.empty():
+            try:
+                self.puzzle_queue.get_nowait()
+            except Exception:
+                break
+        for p in self.workers:
+            p.join(timeout=5)
+            if p.is_alive():
+                p.terminate()  # Force terminate if join fails
+        print("Puzzle workers stopped.")
+
+    def get_puzzle(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Retrieves a pre-generated puzzle from the queue."""
+        return self.puzzle_queue.get()  # This will block until a puzzle is available
+
+    def set_difficulty(self, min_clues: int, max_clues: int):
+        """Atomically updates the difficulty range for the workers."""
+        with self.min_clues.get_lock(), self.max_clues.get_lock():
+            self.min_clues.value = min_clues
+            self.max_clues.value = max_clues
 
 
 def _generate_initial_grid1() -> np.ndarray:
@@ -332,6 +426,7 @@ class SudokuEnv(gym.Env):
         sol_str: Optional[str] = None,
         reward_shaping: bool = False,
         fixed_puzzle: bool = False,
+        puzzle_generator: Optional[PuzzleGenerator] = None,
     ):
         super().__init__()
 
@@ -345,6 +440,7 @@ class SudokuEnv(gym.Env):
         # RL options
         self.reward_shaping = reward_shaping
         self.fixed_puzzle = fixed_puzzle
+        self.puzzle_generator = puzzle_generator
 
         # Initial puzzle (0 for blank cells)
         self.default_puzzle, self.default_solution = self._parse_puzzle(
@@ -403,7 +499,18 @@ class SudokuEnv(gym.Env):
             # Use the default puzzle
             self.initial_puzzle = self.default_puzzle.copy()
             self.solution_grid = self.default_solution.copy()
+            num_clues = np.count_nonzero(self.initial_puzzle != 0)
             # The default_puzzle and default_solution should have been set during __init__
+        elif options and "num_clues" in options and self.puzzle_generator:
+            # Synchronously generate a puzzle with a specific number of clues for testing.
+            # This bypasses the async queue to ensure the test sweep is accurate.
+            num_clues = options["num_clues"]
+            solution = _generate_initial_grid()
+            puzzle = _get_unique_puzzle(SudokuValidator(), solution, num_clues)
+            self.initial_puzzle, self.solution_grid = puzzle, solution
+        elif self.puzzle_generator:
+            # Get a pre-validated puzzle from the async generator
+            self.initial_puzzle, self.solution_grid, num_clues = self.puzzle_generator.get_puzzle()
         else:
             # Generate a new, random, solvable puzzle
             self.solution_grid = _generate_initial_grid()
@@ -411,7 +518,7 @@ class SudokuEnv(gym.Env):
             num_clues = random.randint(25, 55)  # Default value
             num_clues = options.get(
                 "num_clues", num_clues) if options else num_clues
-            self.initial_puzzle = _clue_grid(self.solution_grid, num_clues)
+            self.initial_puzzle = _get_unique_puzzle(SudokuValidator(), self.solution_grid, num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -433,7 +540,7 @@ class SudokuEnv(gym.Env):
         self.rewarded_boxes = set()
 
         observation = self.current_grid  # Return as int32
-        return observation, self.episode_stats
+        return observation, num_clues, self.episode_stats
 
     def step(self, action):
         """
@@ -1015,10 +1122,13 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 recent_solves = deque(
                     maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
+            # Update puzzle generator difficulty based on curriculum
+            if env.puzzle_generator:
+                min_c, max_c = CURRICULUM_LEVELS[curriculum_level]["clues"]
+                env.puzzle_generator.set_difficulty(min_c, max_c)
+
             # 2. Reset the environment and get initial state
-            num_clues = get_curriculum_puzzle_clues(curriculum_level)
-            reset_options = {"num_clues": num_clues}
-            state, _info = env.reset(options=reset_options)
+            state, num_clues, _info = env.reset()
 
             episode_steps = 0
             episode_reward = 0
@@ -1196,7 +1306,7 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
                 mask_t = generate_legal_mask_gpu(state_t)
                 if not mask_t.any():
                     break  # No legal moves left
-                
+
                 additive_mask = torch.where(mask_t, 0.0, ILLEGAL_ACTION_VALUE).unsqueeze(0)
                 action = (q_values + additive_mask).argmax().item()
             else:
@@ -1267,7 +1377,7 @@ def test(args, env, policy_net) -> int:
         print("\n1. Testing on the provided fixed puzzle...")
         # Force reset to the fixed puzzle
         env.fixed_puzzle = True
-        state, _ = env.reset()
+        state, num_clues, _ = env.reset()
         env.fixed_puzzle = args.fixed_puzzle  # Revert to original setting
 
         is_solved, final_reward, steps = run_test_episode(
@@ -1293,7 +1403,7 @@ def test(args, env, policy_net) -> int:
             difficulty = args.test_difficulty_min + \
                 math.floor((i_game - 1) * diff_slope)
             num_clues = 81 - difficulty
-            state, _ = env.reset(options={"num_clues": num_clues})
+            state, num_clues, _ = env.reset(options={"num_clues": num_clues})
             is_solved, final_reward, steps = run_test_episode(
                 args, env, policy_net, state, show_boards=args.show_boards)
             if is_solved:
@@ -1396,6 +1506,8 @@ def parse_args():
                         help='Path to save the trained model.')
     parser.add_argument('--load_model', type=str, default=None,
                         help='Path to load a pre-trained model.')
+    parser.add_argument('--workers', type=int, default=max(1, mp.cpu_count() - 2),
+                        help='Number of CPU workers for puzzle generation.')
 
     args = parser.parse_args()
 
@@ -1416,11 +1528,6 @@ def main() -> int:
 
     # Initialize Environment, Networks, Optimizer, and Memory
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = SudokuEnv(
-        puzzle_str=args.puzzle,
-        reward_shaping=args.reward_shaping,
-        fixed_puzzle=args.fixed_puzzle,
-    )
 
     # Choose model
     solver = None
@@ -1437,6 +1544,52 @@ def main() -> int:
         return 1
     print(f"Using model {args.model}.")
 
+    # Load a pre-trained model if specified to determine starting curriculum level
+    checkpoint = None
+    if args.load_model:
+        try:
+            print(f"Loading metadata from {args.load_model}...")
+            checkpoint = torch.load(args.load_model, map_location=args.device)
+            total_episodes_trained = checkpoint.get(
+                'total_episodes_trained', 0)
+            args.start_episode = total_episodes_trained + 1
+            args.curriculum_level = checkpoint.get('curriculum_level', 0)
+            args.current_epsilon = checkpoint.get(
+                'current_epsilon', args.eps_start)
+            print(f"Will resume training from episode {args.start_episode}.")
+            print(f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
+        except FileNotFoundError:
+            print(
+                f"Warning: Model file not found at \"{args.load_model}\". Starting from scratch.")
+            args.start_episode = 1
+            args.curriculum_level = 0
+            args.current_epsilon = args.eps_start
+        except Exception as e:
+            print(
+                f"Warning: {e} reading file \"{args.load_model}\". Starting from scratch.")
+            args.start_episode = 1
+            args.curriculum_level = 0
+            args.current_epsilon = args.eps_start
+    else:
+        args.start_episode = 1
+        args.curriculum_level = 0
+        args.current_epsilon = args.eps_start
+
+    # Initialize the puzzle generator only if needed for training.
+    # The test loop generates its own specific puzzles synchronously.
+    puzzle_generator = None
+    if not args.fixed_puzzle and args.episodes > 0:
+        initial_min_clues, initial_max_clues = CURRICULUM_LEVELS[args.curriculum_level]["clues"]
+        puzzle_generator = PuzzleGenerator(
+            num_workers=args.workers, initial_min_clues=initial_min_clues, initial_max_clues=initial_max_clues)
+
+    env = SudokuEnv(
+        puzzle_str=args.puzzle,
+        reward_shaping=args.reward_shaping,
+        fixed_puzzle=args.fixed_puzzle,
+        puzzle_generator=puzzle_generator,
+    )
+
     policy_net = solver(env.observation_space.shape,
                         env.action_space.n, args.device).to(args.device)
     target_net = solver(env.observation_space.shape,
@@ -1446,44 +1599,16 @@ def main() -> int:
     memory = ReplayBuffer(args.memory_capacity)
 
     # Load a pre-trained model if specified
-    if args.load_model:
+    if checkpoint:  # args.load_model
         try:
-            # TODO: (when needed) we colud save model type to the checkpoint file and automatically load CORRECT --model type.
-            print(f"Loading model and metadata from {args.load_model}...")
-            checkpoint = torch.load(args.load_model, map_location=args.device)
+            print(f"Loading model and optimizer state from {args.load_model}...")
             policy_net.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-            # Load metadata to continue training state
-            total_episodes_trained = checkpoint.get(
-                'total_episodes_trained', 0)
-            args.start_episode = total_episodes_trained + 1
-            args.curriculum_level = checkpoint.get('curriculum_level', 0)
-            args.current_epsilon = checkpoint.get(
-                'current_epsilon', args.eps_start)
-
-            # TODO: (when needed) Improve how it logs. This log assumes training, but args.episodes = 0 will skip training
-            print(f"Resuming training from episode {args.start_episode}.")
-            print(
-                f"Loaded curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
-            print(f"Loaded epsilon: {args.current_epsilon:.4f}.")
-
-        except FileNotFoundError:
-            print(
-                f"Error: Model file not found at \"{args.load_model}\". Starting from scratch.")
+        except (FileNotFoundError, Exception) as e:
+            print(f"Could not load model weights from {args.load_model}: {e}. Using fresh model.")
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
-        except Exception as e:
-            print(
-                f"Error: {e} reading file \"{args.load_model}\". Starting from scratch.")
-            args.start_episode = 1
-            args.curriculum_level = 0
-            args.current_epsilon = args.eps_start
-    else:
-        args.start_episode = 1
-        args.curriculum_level = 0
-        args.current_epsilon = args.eps_start
 
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()  # Target network is always in evaluation mode
@@ -1495,9 +1620,16 @@ def main() -> int:
     try:
         # Run training if episodes are specified
         if args.episodes > 0:
-            # train is responsible for saving to args.save_model (checkpoint and final)
+            if puzzle_generator:
+                # Start the puzzle generator
+                puzzle_generator.start()
+
+            # train is responsible for saving per args.save_model (checkpoint and final)
             rc = train(args, env, policy_net, target_net, optimizer, memory)
         if not rc:
+            if puzzle_generator:
+                # test() does not use puzzle_generator
+                puzzle_generator.stop()
             # Run the test phase if specified
             if args.test_games > 0:
                 if args.test_seed is not None:
@@ -1515,6 +1647,8 @@ def main() -> int:
     finally:
         # This will run whether the training completes successfully or fails
         restore_sleep_function()
+        if puzzle_generator:
+            puzzle_generator.stop()
     return rc
 
 

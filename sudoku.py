@@ -107,6 +107,30 @@ class Sudoku:
             board[row][col] = 0
         return False
 
+    def count_solutions(self, board, count_limit=2):
+        """Counts the number of solutions for a board up to a limit using backtracking."""
+        board = self.str_to_arr(board) if isinstance(board, str) else board
+        count = 0
+
+        def _solve():
+            nonlocal count
+            blank_cell = self.next_box(board)
+            if blank_cell is False:
+                count += 1
+                return count >= count_limit
+
+            row, col = blank_cell
+            for n in range(1, 10):
+                if self.possible(board, row, col, n):
+                    board[row][col] = n
+                    if _solve():
+                        return True
+                    board[row][col] = 0  # Backtrack
+            return False
+
+        _solve()
+        return count
+
     def solve_eliminator(self, board):
         board = self.str_to_arr(board) if isinstance(board, str) else board
         row, col = None, None
@@ -146,7 +170,7 @@ class Sudoku:
             name = 'solve_brute'
         elif fnc == self.solve_eliminator:
             name = 'solve_eliminator'
-            
+
         print()
         print(f'Solver using method {name}')
         self.print(board)
