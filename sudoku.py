@@ -4,15 +4,16 @@
 """Sudoku puzzle solver and utilities."""
 
 import copy
-from   datetime import timedelta
-from   timeit import default_timer as timer
-from   typing import Callable, List, Optional, Union
+from datetime import timedelta
+from timeit import default_timer as timer
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
 Board = NDArray[np.int_]  # Shape: (9, 9) = np.ndarray((9, 9), dtype=int)
 BoardOrStr = Union[Board, str]
+
 
 class Sudoku:
     """Sudoku puzzle solver and utilities."""
@@ -22,7 +23,7 @@ class Sudoku:
         self._solution = solution
 
     @property
-    def quiz(self)  -> BoardOrStr:
+    def quiz(self) -> BoardOrStr:
         """Puzzle quiz."""
         return self._quiz
 
@@ -33,9 +34,11 @@ class Sudoku:
 
     def print(self, board_str: BoardOrStr) -> None:
         """Print Sudoku board."""
-        board_str = self.arr_to_str(board_str) if not isinstance(board_str, str) else board_str
+        board_str = self.arr_to_str(board_str) if not isinstance(
+            board_str, str) else board_str
         if not board_str or len(board_str) != 81:
-            raise ValueError(f'Given board "{board_str}" is not a sudoku, should be 81 characters')
+            raise ValueError(
+                f'Given board "{board_str}" is not a sudoku, should be 81 characters')
         line = "     +-------+-------+-------+"
         print(line)
         for r in range(9):
@@ -60,11 +63,10 @@ class Sudoku:
                 s += str(c)
         return s
 
-
     def str_to_arr(self, board: str) -> Board:
         """Convert a string to a 2D NumPy array."""
         a = [int(c) for c in board]
-        return np.reshape(a, (9,9,))
+        return np.reshape(a, (9, 9,))
 
     def count_blanks(self, board: BoardOrStr):
         """Count the number of blank/empty cells (0s) on the board."""
@@ -89,7 +91,7 @@ class Sudoku:
         if empty_cells.size == 0:
             return False
 
-        if row is None: # Find the first empty cell on the board
+        if row is None:  # Find the first empty cell on the board
             return tuple(empty_cells[0])
 
         # Find the first empty cell *after* the given (row, col)
@@ -120,7 +122,8 @@ class Sudoku:
         Returns all possible numbers that can be placed at (row, col) without violating the Sudoku rules.
         """
         board = self.str_to_arr(board) if isinstance(board, str) else board
-        possibilities = [n for n in range(1, 10) if self.possible(board, row, col, n)]
+        possibilities = [n for n in range(
+            1, 10) if self.possible(board, row, col, n)]
         return possibilities
 
     def solve_brute(self, board: BoardOrStr) -> Optional[Board]:
@@ -134,7 +137,7 @@ class Sudoku:
         if blank_cell is False:
             return board
         row, col = blank_cell
-        for n in range(1,10):
+        for n in range(1, 10):
             if self.possible(board, row, col, n):
                 board[row][col] = n
                 result = self._solve_brute(board)
@@ -143,12 +146,12 @@ class Sudoku:
             board[row][col] = 0  # Backtrack
         return False
 
-    def count_solutions(self, board: BoardOrStr, count_limit: int=2) -> int:
+    def count_solutions(self, board: BoardOrStr, count_limit: int = 2) -> int:
         """Counts the number of solutions for a board up to a limit using backtracking."""
         board = self.str_to_arr(board) if isinstance(board, str) else board
         return self._count_solutions(board, count_limit)
 
-    def _count_solutions(self, board: Board, count_limit: int=2) -> int:
+    def _count_solutions(self, board: Board, count_limit: int = 2) -> int:
         """Counts the number of solutions for a board up to a limit using backtracking."""
         count = 0
 
@@ -206,7 +209,11 @@ class Sudoku:
 
         return False
 
-    def solver(self, board: BoardOrStr, fnc: Optional[Callable[[BoardOrStr], Optional[Board]]] = None, num_iter: int = 1000) -> None:
+    def solver(self,
+        board: BoardOrStr,
+        fnc: Optional[Callable[[BoardOrStr], Optional[Board]]] = None,
+        num_iter: int = 1000
+    ) -> None:
         """
         Runs Sudoku solver using the specified function and prints the results.
         """
@@ -230,8 +237,8 @@ class Sudoku:
             q = copy.copy(board)
             result = fnc(q)
         end_time = timer()
-        elapsed_time = (end_time - start_time)
-        elapsed_time = elapsed_time / num_iter 
+        elapsed_time = end_time - start_time
+        elapsed_time = elapsed_time / num_iter
 
         time_str = str(timedelta(seconds=elapsed_time))
         if result is not False:
@@ -244,7 +251,8 @@ class Sudoku:
 def main():
     """Main function to run the Sudoku solver."""
     num_iter = 100
-    s = Sudoku('000308600302400058005020071586000400000007002090140000403096105001280006070000030', '719358624362471958845629371586932417134867592297145863423796185951283746678514239')
+    s = Sudoku('000308600302400058005020071586000400000007002090140000403096105001280006070000030',
+               '719358624362471958845629371586932417134867592297145863423796185951283746678514239')
     # s = Sudoku('000260701680070090190004500820100040004602900050003028009300074040050036703018000', '435269781682571493197834562826195347374682915951743628519326874248957136763418259')
     s.solver(s.quiz, s.solve_brute, num_iter)
     s.solver(s.quiz, s.solve_eliminator, num_iter)
@@ -256,10 +264,11 @@ def main():
     for _i in range(num_iter):
         count = s.count_solutions(s.quiz)
     end_time = timer()
-    elapsed_time = (end_time - start_time)
-    elapsed_time = elapsed_time / num_iter 
+    elapsed_time = end_time - start_time
+    elapsed_time = elapsed_time / num_iter
     time_str = str(timedelta(seconds=elapsed_time))
     print(f"Number of solutions for quiz: {count}, found in {time_str}")
+
 
 if __name__ == "__main__":
     main()

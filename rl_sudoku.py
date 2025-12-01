@@ -26,19 +26,19 @@ We define the Environment, the Network, and the Replay Buffer
 import argparse
 from collections import deque, namedtuple
 import ctypes
+from datetime import timedelta
 import math
 import platform
 import random
 from typing import Any, List, Optional, Tuple
 import time
-from datetime import timedelta
+import multiprocessing as mp
 
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import multiprocessing as mp
 
 from dqn_cnn1 import DQNSolverCNN1
 from dqn_cnn2 import DQNSolverCNN2
@@ -68,6 +68,7 @@ TEST_GAMES_REPEAT = 5
 TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
+
 def _get_unique_puzzle(
     validator: SudokuValidator,
     solution,
@@ -82,8 +83,11 @@ def _get_unique_puzzle(
             return puzzle
         tries += 1
         if tries > 10:
-            print(f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
-    raise RuntimeError(f"Unable to find a {num_clues} clues puzzle with a unique solution after {max_tries} tries.")
+            print(
+                f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
+    raise RuntimeError(
+        f"Unable to find a {num_clues} clues puzzle with a unique solution after {max_tries} tries.")
+
 
 def _puzzle_worker(
     queue: mp.Queue,
@@ -366,7 +370,8 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     """
     is_batch = grid_tensor.dim() == 3
     if not is_batch:
-        grid_tensor = grid_tensor.unsqueeze(0)  # Add batch dimension if not present
+        # Add batch dimension if not present
+        grid_tensor = grid_tensor.unsqueeze(0)
 
     b_size = grid_tensor.shape[0]
     _device = grid_tensor.device
@@ -380,7 +385,8 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     col_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1, -1)
 
     # Box used digits: Reshape and check
-    box_used = one_hot.view(b_size, 3, 3, 3, 3, 9).any(dim=(2, 4), keepdim=True)
+    box_used = one_hot.view(b_size, 3, 3, 3, 3, 9).any(
+        dim=(2, 4), keepdim=True)
     box_used = box_used.expand(b_size, 3, 3, 3, 3, 9).reshape(b_size, 9, 9, 9)
 
     used_mask = row_used | col_used | box_used
@@ -518,7 +524,8 @@ class SudokuEnv(gym.Env):
             num_clues = random.randint(25, 55)  # Default value
             num_clues = options.get(
                 "num_clues", num_clues) if options else num_clues
-            self.initial_puzzle = _get_unique_puzzle(SudokuValidator(), self.solution_grid, num_clues)
+            self.initial_puzzle = _get_unique_puzzle(
+                SudokuValidator(), self.solution_grid, num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -1307,7 +1314,8 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
                 if not mask_t.any():
                     break  # No legal moves left
 
-                additive_mask = torch.where(mask_t, 0.0, ILLEGAL_ACTION_VALUE).unsqueeze(0)
+                additive_mask = torch.where(
+                    mask_t, 0.0, ILLEGAL_ACTION_VALUE).unsqueeze(0)
                 action = (q_values + additive_mask).argmax().item()
             else:
                 action = q_values.argmax().item()
@@ -1557,7 +1565,8 @@ def main() -> int:
             args.current_epsilon = checkpoint.get(
                 'current_epsilon', args.eps_start)
             print(f"Will resume training from episode {args.start_episode}.")
-            print(f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
+            print(
+                f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
         except FileNotFoundError:
             print(
                 f"Warning: Model file not found at \"{args.load_model}\". Starting from scratch.")
@@ -1601,11 +1610,13 @@ def main() -> int:
     # Load a pre-trained model if specified
     if checkpoint:  # args.load_model
         try:
-            print(f"Loading model and optimizer state from {args.load_model}...")
+            print(
+                f"Loading model and optimizer state from {args.load_model}...")
             policy_net.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        except (FileNotFoundError, Exception) as e:
-            print(f"Could not load model weights from {args.load_model}: {e}. Using fresh model.")
+        except Exception as e:
+            print(
+                f"Could not load model weights from {args.load_model}: {e}. Using fresh model.")
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
