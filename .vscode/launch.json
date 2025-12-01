@@ -73,6 +73,22 @@
             "justMyCode": true
         },
         {
+            "name": "Python: RL sudoku 0 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--load_model", "model_in_training.masking+rewardshaping.zip",
+                "--save_model", "model_in_training.masking+rewardshaping.zip",
+                "--episodes", "0",
+                "--masking",
+                "--reward_shaping",
+                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "Python: RL sudoku 100 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
@@ -145,22 +161,6 @@
                 "--load_model", "model_in_training.masking+rewardshaping.zip",
                 "--save_model", "model_in_training.masking+rewardshaping.zip",
                 "--episodes", "16000",
-                "--masking",
-                "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
-            ],
-            "console": "integratedTerminal",
-            "justMyCode": true
-        },
-        {
-            "name": "Python: RL sudoku 0 --masking --reward_shaping",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "rl_sudoku.py",
-            "args": [
-                "--load_model", "model_in_training.masking+rewardshaping.zip",
-                "--save_model", "model_in_training.masking+rewardshaping.zip",
-                "--episodes", "0",
                 "--masking",
                 "--reward_shaping",
                 "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
