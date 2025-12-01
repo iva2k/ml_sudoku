@@ -841,9 +841,10 @@ def optimize_model(
 
     # Only proceed if there are non-final states
     if non_final_mask.any():
-        non_final_next_states_np = [s for s, done in zip(
-            batch.next_state, batch.done) if not done]
-        non_final_next_states_gpu = torch.stack(non_final_next_states_np).to(device)
+        # Stack all next_states and filter on the GPU using the non_final_mask.
+        # This avoids a slow Python loop and keeps the pipeline on the GPU.
+        all_next_states = torch.stack(batch.next_state).to(device)
+        non_final_next_states_gpu = all_next_states[non_final_mask]
         non_final_next_states_t = state_to_one_hot(non_final_next_states_gpu)
 
         with torch.no_grad():

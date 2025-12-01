@@ -204,12 +204,17 @@ During development, the agent's performance completely stagnated, with the capab
 
 2. **Data Type Inconsistency:** The state representation was inconsistently handled, switching between `np.int32` and `np.float32` at various stages. This created unnecessary overhead and potential for subtle errors, particularly in functions like `generate_legal_mask` that rely on integer-based logic to build sets. The pipeline was refactored to use `np.int32` for all CPU-side environment logic and `torch.FloatTensor` (via one-hot encoding) exclusively for GPU-side network computations. This created a cleaner, more robust, and more efficient data flow.
 
-### Performance Optimization via Vectorization
+### Training Performance Optimization via Vectorization
 
-Initial implementations of the training loop, particularly the `optimize_model` function, suffered from CPU bottlenecks, leading to low GPU utilization. This was caused by processing data sequentially within Python loops before sending it to the GPU. Key bottlenecks included:
+Initial implementations of the training loop, particularly the `optimize_model` function, suffered from CPU bottlenecks that led to low GPU utilization. This was caused by processing data sequentially within Python loops, forcing the GPU to wait for data.
 
-1. Converting states to one-hot encoding one by one.
-2. Generating legal action masks for each state in a batch individually.
-3. Repeatedly converting tensors from the replay buffer to NumPy arrays inside a loop.
+To resolve this, the data preparation pipeline was completely **vectorized** and re-engineered to operate almost entirely on the GPU. This shift from sequential, per-item processing to parallel, batch processing dramatically reduced CPU overhead and resulted in a **30-50% improvement in training speed**.
 
-To resolve this, the data preparation pipeline was **vectorized**. The `state_to_one_hot` and `generate_legal_mask_gpu` functions were refactored to accept and process an entire batch of grids in a single, parallel operation. The training loop was updated to stack tensors directly from the replay buffer and make single calls to these vectorized functions. This shift from sequential, per-item processing to parallel, batch processing dramatically reduced CPU overhead, increased GPU utilization, and resulted in a **30-50% improvement in training speed**.
+The key components of the optimized pipeline are:
+
+1. **Batch-Oriented Helper Functions:** The `state_to_one_hot` and `generate_legal_mask_gpu` functions were refactored to accept and process an entire batch of grids in a single, parallel GPU operation, eliminating slow Python loops.
+2. **Elimination of CPU Round-Trips:** The `state_to_one_hot` function was modified to accept GPU tensors directly. This prevents expensive data transfer round-trips (GPU -> CPU -> GPU) that were previously required for data conversion.
+3. **Direct Tensor Buffering:** Instead of using list comprehensions and NumPy conversions, transitions are now stacked directly from the replay buffer into a single GPU tensor (`torch.stack`).
+4. **GPU-Based Filtering:** The process of filtering out terminal `next_state` values was moved from a CPU-based Python loop to a single, highly optimized boolean indexing operation performed directly on the GPU.
+
+These changes ensure that the entire batch processing pipeline - from sampling the replay buffer to calculating the loss - stays on the GPU, maximizing utilization and allowing the training loop to keep pace with the GPU's computational speed.
