@@ -47,7 +47,12 @@ from dqn_cnn2 import DQNSolverCNN2
 from dqn_cnn3 import DQNSolverCNN3
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
-from sudoku import Sudoku as SudokuValidator
+from sudoku import (
+    format_grid_to_string,
+    format_grid_to_strings,
+    generate_solved_sudoku,
+    get_unique_sudoku,
+)
 
 # TODO: (when needed) Adjust these during Phase 3
 # Default Hyperparameters & Epsilon-greedy params (all can be changed from command line):
@@ -71,34 +76,13 @@ TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
 
-def _get_unique_puzzle(
-    validator: SudokuValidator,
-    solution,
-    num_clues: int,
-    max_tries: int = 1000
-) -> np.ndarray:
-    tries = 0
-    while tries < max_tries:
-        puzzle = _clue_grid(solution, num_clues)
-        # Check for a unique solution
-        if validator.count_solutions(puzzle.copy()) == 1:
-            return puzzle
-        tries += 1
-        if tries > 10:
-            print(
-                f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
-    raise RuntimeError(
-        f"Unable to find a {num_clues} clues puzzle with a 1 solution after {max_tries} tries.")
-
-
 def _puzzle_worker(
     queue: mp.Queue,
     stop_event: Event,
     min_clues_shared: Synchronized,
-    max_clues_shared: Synchronized
+    max_clues_shared: Synchronized,
 ):
     """Worker process to generate valid Sudoku puzzles."""
-    validator = SudokuValidator()
     while not stop_event.is_set():
         if queue.qsize() > 50:  # Don't overfill the queue
             time.sleep(0.1)
@@ -108,20 +92,22 @@ def _puzzle_worker(
         min_clues = min_clues_shared.value
         max_clues = max_clues_shared.value
 
-        solution = _generate_initial_grid()
+        solution = generate_solved_sudoku()
         num_clues = random.randint(min_clues, max_clues)
-        puzzle = _get_unique_puzzle(validator, solution, num_clues)
+        puzzle = get_unique_sudoku(solution, num_clues)
         queue.put((puzzle, solution, num_clues))
 
 
 class PuzzleGenerator:
     """Manages a pool of worker processes to generate puzzles asynchronously."""
 
-    def __init__(self, num_workers: int, initial_min_clues: int = 1, initial_max_clues: int = 35):
+    def __init__(
+        self, num_workers: int, initial_min_clues: int = 1, initial_max_clues: int = 35
+    ):
         self.num_workers = num_workers
         # Use shared memory for dynamic difficulty updates
-        self.min_clues: Synchronized = mp.Value('i', initial_min_clues)
-        self.max_clues: Synchronized = mp.Value('i', initial_max_clues)
+        self.min_clues: Synchronized = mp.Value("i", initial_min_clues)
+        self.max_clues: Synchronized = mp.Value("i", initial_max_clues)
         self.puzzle_queue = mp.Queue(maxsize=100)
         self.stop_event: Event = mp.Event()
         self.workers: List[mp.Process] = []
@@ -130,12 +116,15 @@ class PuzzleGenerator:
         """Starts the worker processes."""
         print(f"Starting {self.num_workers} puzzle generator workers...")
         for _ in range(self.num_workers):
-            p = mp.Process(target=_puzzle_worker, args=(
-                self.puzzle_queue,
-                self.stop_event,
-                self.min_clues,
-                self.max_clues
-            ))
+            p = mp.Process(
+                target=_puzzle_worker,
+                args=(
+                    self.puzzle_queue,
+                    self.stop_event,
+                    self.min_clues,
+                    self.max_clues,
+                ),
+            )
             p.start()
             self.workers.append(p)
 
@@ -166,141 +155,6 @@ class PuzzleGenerator:
             self.max_clues.value = max_clues
 
 
-def _generate_initial_grid1() -> np.ndarray:
-    """Generates a complete, solved Sudoku grid using a randomized backtracking algorithm."""
-    grid = np.zeros((9, 9), dtype=np.int32)
-    nums = list(range(1, 10))
-
-    def find_blank(g):
-        for r in range(9):
-            for c in range(9):
-                if g[r, c] == 0:
-                    return (r, c)
-        return None
-
-    def is_valid(g, num, pos):
-        r, c = pos
-        # Check row
-        if num in g[r, :]:
-            return False
-        # Check column
-        if num in g[:, c]:
-            return False
-        # Check 3x3 box
-        box_r, box_c = 3 * (r // 3), 3 * (c // 3)
-        if num in g[box_r:box_r + 3, box_c:box_c + 3]:
-            return False
-        return True
-
-    def solve(g):
-        find = find_blank(g)
-        if not find:
-            return True  # Solved
-        else:
-            row, col = find
-
-        random.shuffle(nums)  # Randomize numbers to try
-        for num in nums:
-            if is_valid(g, num, (row, col)):
-                g[row, col] = num
-                if solve(g):
-                    return True
-                g[row, col] = 0  # Backtrack
-        return False
-
-    solve(grid)
-    return grid.astype(np.int32)
-
-
-def _generate_initial_grid() -> np.ndarray:
-    """Generates a complete, solved Sudoku grid using constraint-preserving transformations."""
-    def _shuffle_digits(grid: np.ndarray) -> np.ndarray:
-        """Permutes the digits (1-9) across the entire grid."""
-        mapping = list(range(1, 10))
-        random.shuffle(mapping)  # e.g., [5, 8, 1, 4, 3, 7, 2, 9, 6]
-        shuffled_grid = np.zeros_like(grid)
-        for old_val in range(1, 10):
-            new_val = mapping[old_val - 1]
-            shuffled_grid[grid == old_val] = new_val
-        return shuffled_grid
-
-    def _swap_major_rows(grid: np.ndarray) -> np.ndarray:
-        """Permutes the 3 major row blocks (rows 0-2, 3-5, 6-8)."""
-        row_blocks = np.split(
-            grid, 3, axis=0)  # Split into 3 arrays of shape (3, 9)
-        random.shuffle(row_blocks)
-        return np.concatenate(row_blocks, axis=0)
-
-    def _swap_major_cols(grid: np.ndarray) -> np.ndarray:
-        """Permutes the 3 major column blocks (cols 0-2, 3-5, 6-8)."""
-        col_blocks = np.split(
-            grid, 3, axis=1)  # Split into 3 arrays of shape (9, 3)
-        random.shuffle(col_blocks)
-        return np.concatenate(col_blocks, axis=1)
-
-    def _shuffle_minor_rows(grid: np.ndarray) -> np.ndarray:
-        """Shuffles rows within each of the three 3x3 row blocks."""
-        new_grid = grid.copy()
-        for i in range(3):
-            # Indices for the current row block (e.g., 0, 1, 2)
-            indices = list(range(i * 3, (i + 1) * 3))
-            random.shuffle(indices)
-            new_grid[i * 3: (i + 1) * 3, :] = grid[indices, :]
-        return new_grid
-
-    def _shuffle_minor_cols(grid: np.ndarray) -> np.ndarray:
-        """Shuffles columns within each of the three 3x3 column blocks."""
-        new_grid = grid.copy()
-        for i in range(3):
-            # Indices for the current column block (e.g., 0, 1, 2)
-            indices = list(range(i * 3, (i + 1) * 3))
-            random.shuffle(indices)
-            new_grid[:, i * 3: (i + 1) * 3] = grid[:, indices]
-        return new_grid
-
-    base = 3
-    side = base * base
-
-    # 1. Create Base Grid (Canonical Pattern)
-    # This formula is guaranteed to produce a solved grid
-    def pattern(r, c):
-        return (base * (r % base) + r // base + c) % side
-    nums = np.array(list(range(1, side + 1)))  # [1, 2, ..., 9]
-
-    # Initial canonical solved grid
-    grid = np.array([[nums[pattern(r, c)] for c in range(side)]
-                    for r in range(side)], dtype=np.int32)
-
-    # 2. Apply Permutations (for variety)
-    # This order is safe and preserves all Sudoku rules:
-    grid = _shuffle_digits(grid)
-    grid = _swap_major_rows(grid)
-    grid = _swap_major_cols(grid)
-    grid = _shuffle_minor_rows(grid)
-    grid = _shuffle_minor_cols(grid)
-
-    return grid
-
-
-def _clue_grid(solved_grid: np.ndarray, num_clues: int = 30) -> np.ndarray:
-    """Removes numbers from a solved grid to create a puzzle."""
-    clue_grid = solved_grid.copy()
-    # Create a list of all 81 indices (r, c)
-    all_indices = [(r, c) for r in range(9) for c in range(9)]
-
-    # Shuffle the indices and remove all but the first 'num_clues'
-    random.shuffle(all_indices)
-
-    # Determine how many cells to keep (the clues)
-    cells_to_keep = set(all_indices[:num_clues])
-
-    for r in range(9):
-        for c in range(9):
-            if (r, c) not in cells_to_keep:
-                clue_grid[r, c] = 0
-    return clue_grid
-
-
 def action_encode(row, col, digit):
     """Encode action from row, col, digit."""
     return row * 81 + col * 9 + (digit - 1)
@@ -327,7 +181,7 @@ def check_move_validity(grid: np.ndarray, r: int, c: int, num: int) -> bool:
         return False
     # Check 3x3 box
     box_r, box_c = 3 * (r // 3), 3 * (c // 3)
-    if num in grid[box_r:box_r + 3, box_c:box_c + 3]:
+    if num in grid[box_r : box_r + 3, box_c : box_c + 3]:
         return False
     return True
 
@@ -379,16 +233,16 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     _device = grid_tensor.device
 
     # One-hot encode the grid batch: (B, 9, 9, 10) -> (B, 9, 9, 9) for digits 1-9
-    one_hot = nn.functional.one_hot(
-        grid_tensor.long(), num_classes=10)[:, :, :, 1:].bool()
+    one_hot = nn.functional.one_hot(grid_tensor.long(), num_classes=10)[
+        :, :, :, 1:
+    ].bool()
 
     # Row and column used digits: (B, 9, 9, 9)
     row_used = one_hot.any(dim=2, keepdim=True).expand(-1, -1, 9, -1)
     col_used = one_hot.any(dim=1, keepdim=True).expand(-1, 9, -1, -1)
 
     # Box used digits: Reshape and check
-    box_used = one_hot.view(b_size, 3, 3, 3, 3, 9).any(
-        dim=(2, 4), keepdim=True)
+    box_used = one_hot.view(b_size, 3, 3, 3, 3, 9).any(dim=(2, 4), keepdim=True)
     box_used = box_used.expand(b_size, 3, 3, 3, 3, 9).reshape(b_size, 9, 9, 9)
 
     used_mask = row_used | col_used | box_used
@@ -410,15 +264,19 @@ def state_to_one_hot(grid_tensor: torch.Tensor) -> torch.Tensor:
     if not is_batch:
         grid_tensor = grid_tensor.unsqueeze(0)  # Add batch dimension
 
-    one_hot = nn.functional.one_hot(
-        grid_tensor.long(), num_classes=10).permute(0, 3, 1, 2).float()
+    one_hot = (
+        nn.functional.one_hot(grid_tensor.long(), num_classes=10)
+        .permute(0, 3, 1, 2)
+        .float()
+    )
 
     return one_hot if is_batch else one_hot.squeeze(0)
 
 
 # State/action transition data structure for the Replay Buffer
 Transition = namedtuple(
-    'Transition', ('state', 'action', 'reward', 'next_state', 'done', 'episode'))
+    "Transition", ("state", "action", "reward", "next_state", "done", "episode")
+)
 
 
 class SudokuEnv(gym.Env):
@@ -443,7 +301,8 @@ class SudokuEnv(gym.Env):
         self.action_space = gym.spaces.Discrete(9 * 9 * 9)
         # Observation space is 9x9 grid, values 0 (blank) to 9
         self.observation_space = gym.spaces.Box(
-            low=0, high=9, shape=(9, 9), dtype=np.int32)
+            low=0, high=9, shape=(9, 9), dtype=np.int32
+        )
 
         # RL options
         self.reward_shaping = reward_shaping
@@ -452,7 +311,8 @@ class SudokuEnv(gym.Env):
 
         # Initial puzzle (0 for blank cells)
         self.default_puzzle, self.default_solution = self._parse_puzzle(
-            puzzle_str, sol_str)
+            puzzle_str, sol_str
+        )
         self.initial_puzzle = self.default_puzzle.copy()
         self.solution_grid = self.default_solution.copy()
         self.current_grid = self.default_puzzle.copy()
@@ -469,16 +329,14 @@ class SudokuEnv(gym.Env):
         )
 
     def _parse_puzzle(
-        self,
-        puzzle_str: Optional[str],
-        sol_str: Optional[str]
+        self, puzzle_str: Optional[str], sol_str: Optional[str]
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Converts an 81-char string (0 for blank) into a 9x9 numpy array."""
         if puzzle_str is None and sol_str is None:
             # Default easy puzzle for starting development
             puzzle_str, sol_str = (
                 "000260701680070090190004500820100040004602900050003028009300074040050036703018000",
-                "435269781682571493197834562826195347374682915951743628519326874248957136763418259"
+                "435269781682571493197834562826195347374682915951743628519326874248957136763418259",
             )
 
         # Ensure the string is 81 characters long and contains only digits
@@ -489,17 +347,16 @@ class SudokuEnv(gym.Env):
             )
         if len(sol_str) != 81 or not sol_str.isdigit() or "0" in sol_str:
             raise ValueError(
-                f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided.")
+                f"Solution string must be 81 digits (1-9), no 0's, {len(sol_str)} provided."
+            )
 
         grid = np.array([int(c) for c in puzzle_str]).reshape((9, 9))
         sol_grid = np.array([int(c) for c in sol_str]).reshape((9, 9))
         return grid, sol_grid
 
-    def reset(self,
-              *,
-              seed: int | None = None,
-              options: dict[str, Any] | None = None
-              ) -> tuple[np.ndarray, dict[str, Any]]:
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """Resets the environment to a new (or default) puzzle state."""
         super().reset(seed=seed, options=options)
 
@@ -513,21 +370,21 @@ class SudokuEnv(gym.Env):
             # Synchronously generate a puzzle with a specific number of clues for testing.
             # This bypasses the async queue to ensure the test sweep is accurate.
             num_clues = options["num_clues"]
-            solution = _generate_initial_grid()
-            puzzle = _get_unique_puzzle(SudokuValidator(), solution, num_clues)
+            solution = generate_solved_sudoku()
+            puzzle = get_unique_sudoku(solution, num_clues)
             self.initial_puzzle, self.solution_grid = puzzle, solution
         elif self.puzzle_generator:
             # Get a pre-validated puzzle from the async generator
-            self.initial_puzzle, self.solution_grid, num_clues = self.puzzle_generator.get_puzzle()
+            self.initial_puzzle, self.solution_grid, num_clues = (
+                self.puzzle_generator.get_puzzle()
+            )
         else:
             # Generate a new, random, solvable puzzle
-            self.solution_grid = _generate_initial_grid()
+            self.solution_grid = generate_solved_sudoku()
 
             num_clues = random.randint(25, 55)  # Default value
-            num_clues = options.get(
-                "num_clues", num_clues) if options else num_clues
-            self.initial_puzzle = _get_unique_puzzle(
-                SudokuValidator(), self.solution_grid, num_clues)
+            num_clues = options.get("num_clues", num_clues) if options else num_clues
+            self.initial_puzzle = get_unique_sudoku(self.solution_grid, num_clues)
 
         self.current_grid = self.initial_puzzle.copy()
 
@@ -579,12 +436,12 @@ class SudokuEnv(gym.Env):
                 # print(f"  -> Correct guess! Placed {digit} at ({row}, {col}).")
 
                 # Check for and reward group completions (row, col, box)
-                reward += self._check_and_reward_group_completion(
-                    row, col, 50.0)
+                reward += self._check_and_reward_group_completion(row, col, 50.0)
                 # 3. Check if the puzzle is fully solved.
                 # This happens if all cells are filled AND they match the solution.
-                if (np.all(self.current_grid != 0)
-                        and np.array_equal(self.current_grid, self.solution_grid)):
+                if np.all(self.current_grid != 0) and np.array_equal(
+                    self.current_grid, self.solution_grid
+                ):
                     reward += 100.0  # Large reward for solving
                     terminated = True
             else:
@@ -634,9 +491,11 @@ class SudokuEnv(gym.Env):
         box_r, box_c = 3 * (r // 3), 3 * (c // 3)
         box_idx = (box_r // 3, box_c // 3)
         if box_idx not in self.rewarded_boxes:
-            box_slice = self.current_grid[box_r:box_r+3, box_c:box_c+3]
+            box_slice = self.current_grid[box_r : box_r + 3, box_c : box_c + 3]
             if np.all(box_slice > 0):
-                if np.array_equal(box_slice, self.solution_grid[box_r:box_r+3, box_c:box_c+3]):
+                if np.array_equal(
+                    box_slice, self.solution_grid[box_r : box_r + 3, box_c : box_c + 3]
+                ):
                     # print(f"  -> Milestone! Box {box_idx} completed correctly.")
                     reward += reward_per_group
                     self.rewarded_boxes.add(box_idx)
@@ -665,7 +524,7 @@ class SudokuEnv(gym.Env):
         # Check all 3x3 boxes
         for i in range(3):
             for j in range(3):
-                box = grid[i*3:(i+1)*3, j*3:(j+1)*3].flatten()
+                box = grid[i * 3 : (i + 1) * 3, j * 3 : (j + 1) * 3].flatten()
                 violations += check_violations_1d(box)
 
         return violations
@@ -673,7 +532,7 @@ class SudokuEnv(gym.Env):
     def _is_valid_placement(self, grid, r, c, d):
         """
         Checks if placing digit 'd' at (r, c) is a valid move according to Sudoku rules.
-        A temporary grid check is not needed here as we rely on the `step` function 
+        A temporary grid check is not needed here as we rely on the `step` function
         to handle placing the digit only after this check passes.
         """
         # print(f"Checking placement at {r}, {c} with digit {d}")
@@ -685,7 +544,7 @@ class SudokuEnv(gym.Env):
 
         # Check 3x3 subgrid
         start_r, start_c = 3 * (r // 3), 3 * (c // 3)
-        box = grid[start_r:start_r + 3, start_c:start_c + 3]
+        box = grid[start_r : start_r + 3, start_c : start_c + 3]
         if d in box:
             return False
 
@@ -716,7 +575,7 @@ class SudokuEnv(gym.Env):
         for i in range(3):
             for j in range(3):
                 # Flatten the 3x3 box into a 9-element group
-                box = grid[i*3:(i+1)*3, j*3:(j+1)*3].flatten()
+                box = grid[i * 3 : (i + 1) * 3, j * 3 : (j + 1) * 3].flatten()
                 if not self._check_group(box):
                     return False
 
@@ -724,24 +583,7 @@ class SudokuEnv(gym.Env):
 
     def render(self):
         """Prints the current state of the Sudoku grid."""
-        print(self.format_grid_to_string(self.current_grid))
-
-    @staticmethod
-    def format_grid_to_string(grid: np.ndarray) -> str:
-        """Formats a 9x9 grid for pretty printing, replacing 0s with spaces."""
-        s = ""
-        for i in range(9):
-            if i > 0 and i % 3 == 0:
-                s += "------+-------+------\n"
-
-            row_str = []
-            for j in range(9):
-                digit = grid[i, j]
-                row_str.append(str(digit) if digit != 0 else " ")
-
-            s += " ".join(row_str[0:3]) + " | " + " ".join(row_str[3:6]
-                                                           ) + " | " + " ".join(row_str[6:9]) + "\n"
-        return s
+        print(format_grid_to_string(self.current_grid))
 
     def close(self):
         """Clean up resources."""
@@ -780,17 +622,21 @@ class DifficultyHistogram:
             return
 
         if is_solved:
-            self.solved_by_difficulty[blank_cells] = self.solved_by_difficulty.get(
-                blank_cells, 0) + 1
+            self.solved_by_difficulty[blank_cells] = (
+                self.solved_by_difficulty.get(blank_cells, 0) + 1
+            )
         else:
-            self.unsolved_by_difficulty[blank_cells] = self.unsolved_by_difficulty.get(
-                blank_cells, 0) + 1
+            self.unsolved_by_difficulty[blank_cells] = (
+                self.unsolved_by_difficulty.get(blank_cells, 0) + 1
+            )
 
     def log(self, title: str):
         """Prints the formatted histogram table to the console."""
         print(f"\n--- {title} ---")
-        all_difficulties = sorted(set(self.solved_by_difficulty.keys()) | set(
-            self.unsolved_by_difficulty.keys()))
+        all_difficulties = sorted(
+            set(self.solved_by_difficulty.keys())
+            | set(self.unsolved_by_difficulty.keys())
+        )
         if not all_difficulties:
             print("No data collected.")
             return
@@ -812,8 +658,10 @@ class DifficultyHistogram:
           100% solved difficulties starting from the easiest.
         - The fractional part is a weighted average of solve rates for harder puzzles.
         """
-        all_difficulties = sorted(set(self.solved_by_difficulty.keys()) | set(
-            self.unsolved_by_difficulty.keys()))
+        all_difficulties = sorted(
+            set(self.solved_by_difficulty.keys())
+            | set(self.unsolved_by_difficulty.keys())
+        )
         if not all_difficulties:
             return 0.0
 
@@ -848,8 +696,9 @@ class DifficultyHistogram:
                     weighted_solve_rate_sum += solve_rate * weight
                     total_weight += weight
 
-        fractional_part = (weighted_solve_rate_sum /
-                           total_weight) if total_weight > 0 else 0.0
+        fractional_part = (
+            (weighted_solve_rate_sum / total_weight) if total_weight > 0 else 0.0
+        )
 
         return float(max_100_diff) + fractional_part
 
@@ -861,7 +710,7 @@ def get_action(
     epsilon,
     eps_end,
     eps_decay,
-    use_masking: bool = False
+    use_masking: bool = False,
 ):
     """
     Implements the epsilon-greedy policy.
@@ -935,18 +784,15 @@ def optimize_model(
     batch = Transition(*zip(*transitions))
 
     # Convert batch of transitions to tensors
-    non_final_mask = torch.tensor(
-        tuple(not d for d in batch.done), dtype=torch.bool)
+    non_final_mask = torch.tensor(tuple(not d for d in batch.done), dtype=torch.bool)
 
     device = policy_net.device
     # Vectorized conversion of all states in the batch to one-hot encoding
     # Directly stack tensors from the buffer
     state_batch_tensors = torch.stack(batch.state).to(device)
     state_batch = state_to_one_hot(state_batch_tensors)
-    action_batch = torch.tensor(
-        batch.action, device=device).unsqueeze(1)  # [B, 1]
-    reward_batch = torch.tensor(
-        batch.reward, dtype=torch.float32, device=device)
+    action_batch = torch.tensor(batch.action, device=device).unsqueeze(1)  # [B, 1]
+    reward_batch = torch.tensor(batch.reward, dtype=torch.float32, device=device)
 
     # Compute Q(s_t, a) - the Q-values for the actions taken
     q_values = policy_net(state_batch)
@@ -977,21 +823,17 @@ def optimize_model(
                 masked_target_q = target_q_values + additive_mask
 
                 # Take the max over the masked Q-values
-                next_state_values[non_final_mask] = masked_target_q.max(1)[
-                    0].detach()
+                next_state_values[non_final_mask] = masked_target_q.max(1)[0].detach()
             else:
                 # Use standard max Q-value
-                next_state_values[non_final_mask] = target_q_values.max(1)[
-                    0].detach()
+                next_state_values[non_final_mask] = target_q_values.max(1)[0].detach()
 
     # Compute the expected Q values (target)
-    expected_state_action_values = (
-        next_state_values.to(device) * gamma) + reward_batch
+    expected_state_action_values = (next_state_values.to(device) * gamma) + reward_batch
 
     # Compute Huber loss (a robust form of MSE) - less sensitive to outliers
     criterion = nn.SmoothL1Loss()
-    loss = criterion(state_action_values,
-                     expected_state_action_values.unsqueeze(1))
+    loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
 
     # Optimize the model
     optimizer.zero_grad()
@@ -1020,37 +862,56 @@ def prevent_sleep():
         try:
             # Prevent sleep
             ctypes.windll.kernel32.SetThreadExecutionState(
-                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+            )
             print("Windows sleep prevention activated.")
             # Return a function to restore previous state
 
             def restore_sleep():
                 try:
-                    ctypes.windll.kernel32.SetThreadExecutionState(
-                        ES_CONTINUOUS)
+                    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
                 finally:
                     print("Windows sleep prevention deactivated.")
+
             return restore_sleep
         except AttributeError:
             print("Could not prevent sleep: Failed to call Windows API.")
 
     # TODO: (when needed) Implement for other OS's
     else:
-        print(
-            f"WARNING: Sleep prevention not implemented for this platform {p}.")
+        print(f"WARNING: Sleep prevention not implemented for this platform {p}.")
 
     return lambda: None  # Return a no-op function for other systems
 
 
+# Websudoku levels: Easy=45, Medium=52, Hard=54, Evil=55.
+# Theoretical limit 65 (min 17 clues) - for 66 (16 clues) unique solutions do not exist.
+# Past 45 random clues tend to lead to multiple solutions often
 CURRICULUM_LEVELS = [
-    {"name": "Super Easy", "clues": (
-        78, 80), "solve_rate_threshold": 0.9, "eval_window": 50},
-    {"name": "Easy", "clues": (
-        50, 78), "solve_rate_threshold": 0.7, "eval_window": 100},
-    {"name": "Medium", "clues": (
-        40, 55), "solve_rate_threshold": 0.5, "eval_window": 200},
-    {"name": "Hard", "clues": (
-        25, 45), "solve_rate_threshold": None, "eval_window": None},  # Final level
+    {
+        "name": "Super Easy",
+        "clues": (78, 80),
+        "solve_rate_threshold": 0.9,
+        "eval_window": 50,
+    },
+    {
+        "name": "Easy",
+        "clues": (50, 78),
+        "solve_rate_threshold": 0.7,
+        "eval_window": 100,
+    },
+    {
+        "name": "Medium",
+        "clues": (40, 55),
+        "solve_rate_threshold": 0.5,
+        "eval_window": 200,
+    },
+    {
+        "name": "Hard",
+        "clues": (25, 45),
+        "solve_rate_threshold": None,
+        "eval_window": None,
+    },  # Final level
 ]
 
 
@@ -1062,10 +923,7 @@ def get_curriculum_puzzle_clues(curriculum_level: int) -> int:
     return num_clues
 
 
-def check_curriculum_progress(
-    current_level: int,
-    recent_solves: deque
-) -> int:
+def check_curriculum_progress(current_level: int, recent_solves: deque) -> int:
     """Check if the agent is ready to advance to the next curriculum level."""
     if current_level >= len(CURRICULUM_LEVELS) - 1:
         return current_level  # Already at the highest level
@@ -1091,13 +949,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
     # Add device to args
     if "device" not in args or not args.device:
-        args.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu")
+        args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {args.device}")
 
     # Training loop
     epoch_steps_done = 0
-    best_reward = -float('inf')
+    best_reward = -float("inf")
     solved_count = 0
     # Track minimum clues for a solved puzzle (lower is harder)
     min_clues_solved = 99
@@ -1106,8 +963,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     total_episodes_trained = args.start_episode - 1
     current_epsilon = args.current_epsilon
     curriculum_level = args.curriculum_level
-    recent_solves = deque(
-        maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+    recent_solves = deque(maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
 
     histogram = DifficultyHistogram()
 
@@ -1125,12 +981,16 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
             # 1. Adaptive Curriculum Learning
             curriculum_level = check_curriculum_progress(
-                curriculum_level, recent_solves)
-            if curriculum_level < len(CURRICULUM_LEVELS) - 1 and \
-                len(recent_solves) == recent_solves.maxlen:
+                curriculum_level, recent_solves
+            )
+            if (
+                curriculum_level < len(CURRICULUM_LEVELS) - 1
+                and len(recent_solves) == recent_solves.maxlen
+            ):
                 # Reset window for new level
                 recent_solves = deque(
-                    maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
+                    maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window")
+                )
 
             # Update puzzle generator difficulty based on curriculum
             if env.puzzle_generator:
@@ -1154,7 +1014,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     current_epsilon,
                     args.eps_end,
                     args.eps_decay,
-                    args.masking
+                    args.masking,
                 )
 
                 if action is None:
@@ -1163,8 +1023,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     break
 
                 # 4. Take action in environment
-                observation, reward, terminated, truncated, _info = env.step(
-                    action)
+                observation, reward, terminated, truncated, _info = env.step(action)
                 next_state = observation
                 done = terminated or truncated
 
@@ -1173,7 +1032,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 state_t = torch.from_numpy(state).int()
                 next_state_t = torch.from_numpy(next_state).int()
                 transition = Transition(
-                    state_t, action, reward, next_state_t, done, i_episode)
+                    state_t, action, reward, next_state_t, done, i_episode
+                )
                 memory.push(*transition)
                 # Also store for potential end-of-episode training
                 episode_transitions.append(transition)
@@ -1185,9 +1045,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # 7. Perform optimization step
                 transitions = memory.sample(args.batch_size)
                 optimize_model(
-                    policy_net, target_net, optimizer,
+                    policy_net,
+                    target_net,
+                    optimizer,
                     transitions,
-                    args.gamma, args.masking
+                    args.gamma,
+                    args.masking,
                 )
                 epoch_steps_done += 1
                 episode_steps += 1
@@ -1206,8 +1069,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             total_episodes_trained += 1
 
             # Update difficulty histograms
-            blank_cells = env.episode_stats.get(
-                'blank_cells_start', 81 - num_clues)
+            blank_cells = env.episode_stats.get("blank_cells_start", 81 - num_clues)
             histogram.update(blank_cells, episode_solved)
 
             # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
@@ -1217,9 +1079,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
                 optimize_model(
-                    policy_net, target_net, optimizer,
+                    policy_net,
+                    target_net,
+                    optimizer,
                     episode_transitions,
-                    args.gamma, args.masking
+                    args.gamma,
+                    args.masking,
                 )
 
             # 9. Update the target network periodically
@@ -1228,7 +1093,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
             # 10. Logging and Reporting
             best_reward_str = ""
-            if best_reward == -float('inf') or episode_reward > best_reward:
+            if best_reward == -float("inf") or episode_reward > best_reward:
                 # if best_reward != -float('inf'):
                 best_reward_str = " (New Best Reward)"
                 best_reward = episode_reward
@@ -1236,13 +1101,17 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             if episode_solved or best_reward_str or i_episode % args.log_episodes == 0:
                 # if not env.fixed_puzzle:
                 #     print(f"Episode {i_episode}: New puzzle:")
-                #     print(SudokuEnv.format_grid_to_string(env.initial_puzzle))
+                #     print(format_grid_to_string(env.initial_puzzle))
 
                 stats = env.episode_stats
-                solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
-                groups_completed = f"R:{stats['completed_rows']}" \
-                    f"/C:{stats['completed_cols']}" \
+                solved_ratio = (
+                    f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
+                )
+                groups_completed = (
+                    f"R:{stats['completed_rows']}"
+                    f"/C:{stats['completed_cols']}"
                     f"/B:{stats['completed_boxes']}"
+                )
 
                 print(
                     f"Episode {i_episode:6d}: "
@@ -1256,27 +1125,35 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 )
 
             # 11. Save the model periodically or at the end of training
-            if args.save_model and (best_reward_str or final_episode or i_episode % 100 == 0):
-                model_str = 'final model' if final_episode else 'model checkpoint'
+            if args.save_model and (
+                best_reward_str or final_episode or i_episode % 100 == 0
+            ):
+                model_str = "final model" if final_episode else "model checkpoint"
                 print(f"Saving {model_str} to {args.save_model}...")
-                torch.save({
-                    'model_state_dict': policy_net.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'total_episodes_trained': total_episodes_trained,
-                    'curriculum_level': curriculum_level,
-                    'current_epsilon': current_epsilon,
-                }, args.save_model)
+                torch.save(
+                    {
+                        "model_state_dict": policy_net.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "total_episodes_trained": total_episodes_trained,
+                        "curriculum_level": curriculum_level,
+                        "current_epsilon": current_epsilon,
+                    },
+                    args.save_model,
+                )
     except KeyboardInterrupt:
         print("\nTraining interrupted by user (Ctrl+C).")
         if args.save_model:
             print(f"Saving final model state to {args.save_model}...")
-            torch.save({
-                'model_state_dict': policy_net.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'total_episodes_trained': total_episodes_trained,
-                'curriculum_level': curriculum_level,
-                'current_epsilon': current_epsilon,
-            }, args.save_model)
+            torch.save(
+                {
+                    "model_state_dict": policy_net.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "total_episodes_trained": total_episodes_trained,
+                    "curriculum_level": curriculum_level,
+                    "current_epsilon": current_epsilon,
+                },
+                args.save_model,
+            )
 
     end_time = time.time()
     training_duration = end_time - start_time
@@ -1284,14 +1161,22 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     time_per_step = training_duration / epoch_steps_done
     time_per_step_str = str(timedelta(seconds=time_per_step))
 
-    difficulty_summary = f" (Hardest level {81-min_clues_solved} cell(s))" \
-        if min_clues_solved != 99 else ""
-    print("\n" + "\n  ".join([
-        f"Training Complete {'='*60}",
-        f"Final Best Reward: {best_reward:.2f} over {total_episodes_trained} total episodes.",
-        f"Total Solved: {solved_count}{difficulty_summary}",
-        f"Total time: {duration_str} ({time_per_step_str} per step)",
-    ]))
+    difficulty_summary = (
+        f" (Hardest level {81-min_clues_solved} cell(s))"
+        if min_clues_solved != 99
+        else ""
+    )
+    print(
+        "\n"
+        + "\n  ".join(
+            [
+                f"Training Complete {'='*60}",
+                f"Final Best Reward: {best_reward:.2f} over {total_episodes_trained} total episodes.",
+                f"Total Solved: {solved_count}{difficulty_summary}",
+                f"Total time: {duration_str} ({time_per_step_str} per step)",
+            ]
+        )
+    )
     histogram.log("Training Performance by Difficulty")
     capability_score = histogram.get_capability_score()
     print(f"Final Capability Score: {capability_score:.3f}")
@@ -1318,7 +1203,8 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
                     break  # No legal moves left
 
                 additive_mask = torch.where(
-                    mask_t, 0.0, ILLEGAL_ACTION_VALUE).unsqueeze(0)
+                    mask_t, 0.0, ILLEGAL_ACTION_VALUE
+                ).unsqueeze(0)
                 action = (q_values + additive_mask).argmax().item()
             else:
                 action = q_values.argmax().item()
@@ -1331,12 +1217,10 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             break
 
     if show_boards:
-        initial_board = SudokuEnv.format_grid_to_string(
-            env.initial_puzzle).split('\n')
-        final_board = SudokuEnv.format_grid_to_string(
-            env.current_grid).split('\n')
+        initial_board = format_grid_to_strings(env.initial_puzzle)
+        final_board = format_grid_to_strings(env.current_grid)
         delta_grid = env.current_grid - env.initial_puzzle
-        delta_board = SudokuEnv.format_grid_to_string(delta_grid).split('\n')
+        delta_board = format_grid_to_strings(delta_grid)
 
         # Print 3 boards horizontally, with some gap
         gap = "    "
@@ -1344,10 +1228,14 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
         print(gap.join([f"{h:21s}" for h in headings]))
 
         lines = len(initial_board)
-        print("\n".join([
-            initial_board[i] + gap + final_board[i] + gap + delta_board[i]
-            for i in range(lines)
-        ]))
+        print(
+            "\n".join(
+                [
+                    initial_board[i] + gap + final_board[i] + gap + delta_board[i]
+                    for i in range(lines)
+                ]
+            )
+        )
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
     return is_solved, episode_reward, episode_steps
@@ -1357,9 +1245,11 @@ def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_so
     """Helper function to log the results of a single test game."""
     stats = env.episode_stats
     solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
-    groups_completed = f"R:{stats['completed_rows']}" \
-        f"/C:{stats['completed_cols']}" \
+    groups_completed = (
+        f"R:{stats['completed_rows']}"
+        f"/C:{stats['completed_cols']}"
         f"/B:{stats['completed_boxes']}"
+    )
     print(
         f"  Game  {i_game:6d} of {num_generated_games:6d}: "
         f"Steps: {steps:3d}, "
@@ -1392,15 +1282,15 @@ def test(args, env, policy_net) -> int:
         env.fixed_puzzle = args.fixed_puzzle  # Revert to original setting
 
         is_solved, final_reward, steps = run_test_episode(
-            args, env, policy_net, state, show_boards=args.show_boards)
+            args, env, policy_net, state, show_boards=args.show_boards
+        )
         if is_solved:
             solved_count += 1
         total_reward += final_reward
         total_steps += steps
 
-        log_test_result(env, 0, num_generated_games,
-                        steps, final_reward, is_solved)
-        histogram.update(env.episode_stats.get('blank_cells_start'), is_solved)
+        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved)
+        histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
     # 2. Test on procedurally generated puzzles
     if num_generated_games > 0:
@@ -1408,24 +1298,27 @@ def test(args, env, policy_net) -> int:
             f"\n2. Testing on {num_generated_games} generated puzzles "
             f"(Difficulty: {args.test_difficulty_min}-{args.test_difficulty_max})..."
         )
-        diff_slope = (1 + args.test_difficulty_max -
-                      args.test_difficulty_min) / num_generated_games
-        for i_game in range(1, num_generated_games+1):
-            difficulty = args.test_difficulty_min + \
-                math.floor((i_game - 1) * diff_slope)
+        diff_slope = (
+            1 + args.test_difficulty_max - args.test_difficulty_min
+        ) / num_generated_games
+        for i_game in range(1, num_generated_games + 1):
+            difficulty = args.test_difficulty_min + math.floor(
+                (i_game - 1) * diff_slope
+            )
             num_clues = 81 - difficulty
             state, num_clues, _ = env.reset(options={"num_clues": num_clues})
             is_solved, final_reward, steps = run_test_episode(
-                args, env, policy_net, state, show_boards=args.show_boards)
+                args, env, policy_net, state, show_boards=args.show_boards
+            )
             if is_solved:
                 solved_count += 1
             total_reward += final_reward
             total_steps += steps
 
-            log_test_result(env, i_game, num_generated_games,
-                            steps, final_reward, is_solved)
-            histogram.update(env.episode_stats.get(
-                'blank_cells_start'), is_solved)
+            log_test_result(
+                env, i_game, num_generated_games, steps, final_reward, is_solved
+            )
+            histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
     # 3. Report final statistics
     end_time = time.time()
@@ -1436,16 +1329,20 @@ def test(args, env, policy_net) -> int:
         time_per_step = test_duration / total_steps
         time_per_step_str = str(timedelta(seconds=time_per_step))
 
-    solve_rate = (solved_count / args.test_games) * \
-        100 if args.test_games > 0 else 0
+    solve_rate = (solved_count / args.test_games) * 100 if args.test_games > 0 else 0
     avg_reward = total_reward / args.test_games if args.test_games > 0 else 0
 
-    print("\n" + "\n  ".join([
-        f"Test Phase Complete {'='*56}",
-        f"Puzzles Solved: {solved_count} / {args.test_games} ({solve_rate:.1f}%)",
-        f"Average Reward: {avg_reward:.2f}",
-        f"Total time: {duration_str} ({time_per_step_str} per step)",
-    ]))
+    print(
+        "\n"
+        + "\n  ".join(
+            [
+                f"Test Phase Complete {'='*56}",
+                f"Puzzles Solved: {solved_count} / {args.test_games} ({solve_rate:.1f}%)",
+                f"Average Reward: {avg_reward:.2f}",
+                f"Total time: {duration_str} ({time_per_step_str} per step)",
+            ]
+        )
+    )
     histogram.log("Test Performance by Difficulty")
     capability_score = histogram.get_capability_score()
     print(f"Final Capability Score: {capability_score:.3f}")
@@ -1455,70 +1352,137 @@ def test(args, env, policy_net) -> int:
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Deep Q-Learning Sudoku Solver")
-    parser.add_argument('--model', type=str, default="transformer1",
-                        choices=["cnn1", "cnn2", "cnn3", "transformer1"],
-                        help='Model architecture to use.')
+    parser = argparse.ArgumentParser(description="Deep Q-Learning Sudoku Solver")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="transformer1",
+        choices=["cnn1", "cnn2", "cnn3", "transformer1"],
+        help="Model architecture to use.",
+    )
     # Training arguments
-    parser.add_argument('--episodes', type=int,
-                        default=MAX_EPISODES, help='Number of episodes to train.')
-    parser.add_argument('--puzzle', type=str, default=None,
-                        help='Initial Sudoku puzzle string (81 chars, 0 for blank).')
-    parser.add_argument('--reward_shaping', action='store_true',
-                        help='Enable reward shaping (progress-based rewards).')
-    parser.add_argument('--masking', action='store_true',
-                        help='Enable action masking (only choose blank cells).')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed for training reproducibility.')
-    parser.add_argument('--fixed_puzzle', action='store_true',
-                        help='Use only given puzzle for training.')
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=MAX_EPISODES,
+        help="Number of episodes to train.",
+    )
+    parser.add_argument(
+        "--puzzle",
+        type=str,
+        default=None,
+        help="Initial Sudoku puzzle string (81 chars, 0 for blank).",
+    )
+    parser.add_argument(
+        "--reward_shaping",
+        action="store_true",
+        help="Enable reward shaping (progress-based rewards).",
+    )
+    parser.add_argument(
+        "--masking",
+        action="store_true",
+        help="Enable action masking (only choose blank cells).",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for training reproducibility."
+    )
+    parser.add_argument(
+        "--fixed_puzzle",
+        action="store_true",
+        help="Use only given puzzle for training.",
+    )
 
     # Hyperparameter arguments
-    parser.add_argument('--lr', type=float, default=LR,
-                        help='Learning rate for the optimizer.')
-    parser.add_argument('--gamma', type=float, default=GAMMA,
-                        help='Discount factor for future rewards.')
-    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
-                        help='Batch size for training.')
-    parser.add_argument('--memory_capacity', type=int,
-                        default=MEMORY_CAPACITY, help='Capacity of the replay buffer.')
-    parser.add_argument('--target_update', type=int, default=TARGET_UPDATE,
-                        help='Frequency (in episodes) to update the target network.')
-    parser.add_argument('--weight_decay', type=float, default=WEIGHT_DECAY,
-                        help='Weight decay for the AdamW optimizer.')
+    parser.add_argument(
+        "--lr", type=float, default=LR, help="Learning rate for the optimizer."
+    )
+    parser.add_argument(
+        "--gamma", type=float, default=GAMMA, help="Discount factor for future rewards."
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=BATCH_SIZE, help="Batch size for training."
+    )
+    parser.add_argument(
+        "--memory_capacity",
+        type=int,
+        default=MEMORY_CAPACITY,
+        help="Capacity of the replay buffer.",
+    )
+    parser.add_argument(
+        "--target_update",
+        type=int,
+        default=TARGET_UPDATE,
+        help="Frequency (in episodes) to update the target network.",
+    )
+    parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=WEIGHT_DECAY,
+        help="Weight decay for the AdamW optimizer.",
+    )
     # Epsilon-greedy arguments
-    parser.add_argument('--eps_start', type=float, default=EPS_START,
-                        help='Starting value of epsilon for exploration.')
-    parser.add_argument('--eps_end', type=float, default=EPS_END,
-                        help='Minimum value of epsilon.')
-    parser.add_argument('--eps_decay', type=float, default=EPS_DECAY,
-                        help='Decay rate for epsilon.')
+    parser.add_argument(
+        "--eps_start",
+        type=float,
+        default=EPS_START,
+        help="Starting value of epsilon for exploration.",
+    )
+    parser.add_argument(
+        "--eps_end", type=float, default=EPS_END, help="Minimum value of epsilon."
+    )
+    parser.add_argument(
+        "--eps_decay", type=float, default=EPS_DECAY, help="Decay rate for epsilon."
+    )
 
-    parser.add_argument('--log_episodes', type=int, default=10,
-                        help='Log info once every N episodes.')
+    parser.add_argument(
+        "--log_episodes", type=int, default=10, help="Log info once every N episodes."
+    )
 
     # Testing arguments
-    default_test_games = (TEST_DIFFICULTY_MAX -
-                          TEST_DIFFICULTY_MIN+1)*TEST_GAMES_REPEAT
-    parser.add_argument('--test_games', type=int, default=default_test_games,
-                        help='Number of games to test after training.')
-    parser.add_argument('--test_difficulty_min', type=int, default=TEST_DIFFICULTY_MIN,
-                        help='Min blank cells for test puzzles.')
-    parser.add_argument('--test_difficulty_max', type=int, default=TEST_DIFFICULTY_MAX,
-                        help='Max blank cells for test puzzles.')
-    parser.add_argument('--show_boards', action='store_true',
-                        help='Show test puzzles and solutions.')
-    parser.add_argument('--test_seed', type=int, default=42,
-                        help='Random seed for test reproducibility.')
+    default_test_games = (
+        TEST_DIFFICULTY_MAX - TEST_DIFFICULTY_MIN + 1
+    ) * TEST_GAMES_REPEAT
+    parser.add_argument(
+        "--test_games",
+        type=int,
+        default=default_test_games,
+        help="Number of games to test after training.",
+    )
+    parser.add_argument(
+        "--test_difficulty_min",
+        type=int,
+        default=TEST_DIFFICULTY_MIN,
+        help="Min blank cells for test puzzles.",
+    )
+    parser.add_argument(
+        "--test_difficulty_max",
+        type=int,
+        default=TEST_DIFFICULTY_MAX,
+        help="Max blank cells for test puzzles.",
+    )
+    parser.add_argument(
+        "--show_boards", action="store_true", help="Show test puzzles and solutions."
+    )
+    parser.add_argument(
+        "--test_seed",
+        type=int,
+        default=42,
+        help="Random seed for test reproducibility.",
+    )
 
     # Model persistence
-    parser.add_argument('--save_model', type=str, default=None,
-                        help='Path to save the trained model.')
-    parser.add_argument('--load_model', type=str, default=None,
-                        help='Path to load a pre-trained model.')
-    parser.add_argument('--workers', type=int, default=max(1, mp.cpu_count() - 2),
-                        help='Number of CPU workers for puzzle generation.')
+    parser.add_argument(
+        "--save_model", type=str, default=None, help="Path to save the trained model."
+    )
+    parser.add_argument(
+        "--load_model", type=str, default=None, help="Path to load a pre-trained model."
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, mp.cpu_count() - 2),
+        help="Number of CPU workers for puzzle generation.",
+    )
 
     args = parser.parse_args()
 
@@ -1561,24 +1525,25 @@ def main() -> int:
         try:
             print(f"Loading metadata from {args.load_model}...")
             checkpoint = torch.load(args.load_model, map_location=args.device)
-            total_episodes_trained = checkpoint.get(
-                'total_episodes_trained', 0)
+            total_episodes_trained = checkpoint.get("total_episodes_trained", 0)
             args.start_episode = total_episodes_trained + 1
-            args.curriculum_level = checkpoint.get('curriculum_level', 0)
-            args.current_epsilon = checkpoint.get(
-                'current_epsilon', args.eps_start)
+            args.curriculum_level = checkpoint.get("curriculum_level", 0)
+            args.current_epsilon = checkpoint.get("current_epsilon", args.eps_start)
             print(f"Will resume training from episode {args.start_episode}.")
             print(
-                f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}.")
+                f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}."
+            )
         except FileNotFoundError:
             print(
-                f"Warning: Model file not found at \"{args.load_model}\". Starting from scratch.")
+                f'Warning: Model file not found at "{args.load_model}". Starting from scratch.'
+            )
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
         except Exception as e:
             print(
-                f"Warning: {e} reading file \"{args.load_model}\". Starting from scratch.")
+                f'Warning: {e} reading file "{args.load_model}". Starting from scratch.'
+            )
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start
@@ -1591,11 +1556,13 @@ def main() -> int:
     # The test loop generates its own specific puzzles synchronously.
     puzzle_generator = None
     if not args.fixed_puzzle and args.episodes > 0:
-        initial_min_clues, initial_max_clues = CURRICULUM_LEVELS[args.curriculum_level]["clues"]
+        initial_min_clues, initial_max_clues = CURRICULUM_LEVELS[args.curriculum_level][
+            "clues"
+        ]
         puzzle_generator = PuzzleGenerator(
             num_workers=args.workers,
             initial_min_clues=initial_min_clues,
-            initial_max_clues=initial_max_clues
+            initial_max_clues=initial_max_clues,
         )
 
     env = SudokuEnv(
@@ -1605,24 +1572,30 @@ def main() -> int:
         puzzle_generator=puzzle_generator,
     )
 
-    policy_net = solver(env.observation_space.shape,
-                        env.action_space.n, args.device).to(args.device)
-    target_net = solver(env.observation_space.shape,
-                        env.action_space.n, args.device).to(args.device)
-    optimizer = optim.AdamW(policy_net.parameters(),
-                            lr=args.lr, amsgrad=True, weight_decay=args.weight_decay)
+    policy_net = solver(
+        env.observation_space.shape, env.action_space.n, args.device
+    ).to(args.device)
+    target_net = solver(
+        env.observation_space.shape, env.action_space.n, args.device
+    ).to(args.device)
+    optimizer = optim.AdamW(
+        policy_net.parameters(),
+        lr=args.lr,
+        amsgrad=True,
+        weight_decay=args.weight_decay,
+    )
     memory = ReplayBuffer(args.memory_capacity)
 
     # Load a pre-trained model if specified
     if checkpoint:  # args.load_model
         try:
-            print(
-                f"Loading model and optimizer state from {args.load_model}...")
-            policy_net.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print(f"Loading model and optimizer state from {args.load_model}...")
+            policy_net.load_state_dict(checkpoint["model_state_dict"])
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         except Exception as e:
             print(
-                f"Could not load model weights from {args.load_model}: {e}. Using fresh model.")
+                f"Could not load model weights from {args.load_model}: {e}. Using fresh model."
+            )
             args.start_episode = 1
             args.curriculum_level = 0
             args.current_epsilon = args.eps_start

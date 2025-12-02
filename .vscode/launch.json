@@ -37,7 +37,7 @@
                 "--episodes", "200",
                 "--fixed_puzzle",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -52,7 +52,7 @@
                 "--save_model", "model_in_training.rewardshaping.zip",
                 "--episodes", "200",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -67,7 +67,7 @@
                 "--save_model", "model_in_training.masking.zip",
                 "--episodes", "200",
                 "--masking",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -83,7 +83,8 @@
                 "--episodes", "0",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
+                // "--show_boards",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -99,7 +100,8 @@
                 "--episodes", "100",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                // "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
+                "--test_games", "210", "--test_difficulty_min", "3", "--test_difficulty_max", "45",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -115,7 +117,7 @@
                 "--episodes", "400",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -131,7 +133,7 @@
                 "--episodes", "1000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -147,7 +149,7 @@
                 "--episodes", "4000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -163,7 +165,7 @@
                 "--episodes", "16000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -179,7 +181,7 @@
                 "--episodes", "50000",
                 "--masking",
                 "--reward_shaping",
-                "--test_games", "295", "--test_difficulty_min", "3", "--test_difficulty_max", "61",
+                "--test_games", "245", "--test_difficulty_min", "3", "--test_difficulty_max", "51",
             ],
             "console": "integratedTerminal",
             "justMyCode": true
