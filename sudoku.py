@@ -119,7 +119,8 @@ class Sudoku:
 
     def all_possible(self, board: BoardOrStr, row: int, col: int) -> List[int]:
         """
-        Returns all possible numbers that can be placed at (row, col) without violating the Sudoku rules.
+        Return all possible numbers that can be placed at (row, col)
+        without violating the Sudoku rules.
         """
         board = self.str_to_arr(board) if isinstance(board, str) else board
         possibilities = [n for n in range(

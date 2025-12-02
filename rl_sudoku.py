@@ -33,6 +33,8 @@ import random
 from typing import Any, List, Optional, Tuple
 import time
 import multiprocessing as mp
+from multiprocessing.sharedctypes import Synchronized
+from multiprocessing.synchronize import Event
 
 import gymnasium as gym
 import numpy as np
@@ -86,14 +88,14 @@ def _get_unique_puzzle(
             print(
                 f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
     raise RuntimeError(
-        f"Unable to find a {num_clues} clues puzzle with a unique solution after {max_tries} tries.")
+        f"Unable to find a {num_clues} clues puzzle with a 1 solution after {max_tries} tries.")
 
 
 def _puzzle_worker(
     queue: mp.Queue,
-    stop_event: mp.Event,
-    min_clues_shared: mp.Value,
-    max_clues_shared: mp.Value
+    stop_event: Event,
+    min_clues_shared: Synchronized,
+    max_clues_shared: Synchronized
 ):
     """Worker process to generate valid Sudoku puzzles."""
     validator = SudokuValidator()
@@ -118,10 +120,10 @@ class PuzzleGenerator:
     def __init__(self, num_workers: int, initial_min_clues: int = 1, initial_max_clues: int = 35):
         self.num_workers = num_workers
         # Use shared memory for dynamic difficulty updates
-        self.min_clues = mp.Value('i', initial_min_clues)
-        self.max_clues = mp.Value('i', initial_max_clues)
+        self.min_clues: Synchronized = mp.Value('i', initial_min_clues)
+        self.max_clues: Synchronized = mp.Value('i', initial_max_clues)
         self.puzzle_queue = mp.Queue(maxsize=100)
-        self.stop_event = mp.Event()
+        self.stop_event: Event = mp.Event()
         self.workers: List[mp.Process] = []
 
     def start(self):
@@ -377,7 +379,7 @@ def generate_legal_mask_gpu(grid_tensor: torch.Tensor) -> torch.Tensor:
     _device = grid_tensor.device
 
     # One-hot encode the grid batch: (B, 9, 9, 10) -> (B, 9, 9, 9) for digits 1-9
-    one_hot = torch.nn.functional.one_hot(
+    one_hot = nn.functional.one_hot(
         grid_tensor.long(), num_classes=10)[:, :, :, 1:].bool()
 
     # Row and column used digits: (B, 9, 9, 9)
@@ -408,7 +410,7 @@ def state_to_one_hot(grid_tensor: torch.Tensor) -> torch.Tensor:
     if not is_batch:
         grid_tensor = grid_tensor.unsqueeze(0)  # Add batch dimension
 
-    one_hot = torch.nn.functional.one_hot(
+    one_hot = nn.functional.one_hot(
         grid_tensor.long(), num_classes=10).permute(0, 3, 1, 2).float()
 
     return one_hot if is_batch else one_hot.squeeze(0)
@@ -938,7 +940,7 @@ def optimize_model(
 
     device = policy_net.device
     # Vectorized conversion of all states in the batch to one-hot encoding
-    # Directly stack tensors from the buffer, avoiding slow list comprehensions and numpy conversions.
+    # Directly stack tensors from the buffer
     state_batch_tensors = torch.stack(batch.state).to(device)
     state_batch = state_to_one_hot(state_batch_tensors)
     action_batch = torch.tensor(
@@ -1124,7 +1126,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             # 1. Adaptive Curriculum Learning
             curriculum_level = check_curriculum_progress(
                 curriculum_level, recent_solves)
-            if curriculum_level < len(CURRICULUM_LEVELS) - 1 and len(recent_solves) == recent_solves.maxlen:
+            if curriculum_level < len(CURRICULUM_LEVELS) - 1 and \
+                len(recent_solves) == recent_solves.maxlen:
                 # Reset window for new level
                 recent_solves = deque(
                     maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window"))
@@ -1590,7 +1593,10 @@ def main() -> int:
     if not args.fixed_puzzle and args.episodes > 0:
         initial_min_clues, initial_max_clues = CURRICULUM_LEVELS[args.curriculum_level]["clues"]
         puzzle_generator = PuzzleGenerator(
-            num_workers=args.workers, initial_min_clues=initial_min_clues, initial_max_clues=initial_max_clues)
+            num_workers=args.workers,
+            initial_min_clues=initial_min_clues,
+            initial_max_clues=initial_max_clues
+        )
 
     env = SudokuEnv(
         puzzle_str=args.puzzle,

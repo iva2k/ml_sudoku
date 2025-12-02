@@ -1,4 +1,16 @@
-# Python 3.13.2
+# Python 3.10.19
+
+# For best compatibility, use a stable Python version like 3.11 or 3.12.
+# Python 3.13+ is not yet fully supported by all packages.
+
+# --- Installation Instructions ---
+# 1. Create and activate a virtual environment.
+# 2. Install PyTorch with CUDA support using the command from https://pytorch.org/get-started/locally/
+#    (Example for CUDA 12.1):
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# 3. Install the remaining packages:
+#    pip install -r requirements.txt
+# --------------------------------
 
 lxml==6.0.2
 lxml_stubs==0.5.1
@@ -10,10 +22,7 @@ numpy==2.3.5
 
 gymnasium==1.2.2
 
-# torch==2.6.0
-torch==2.9.1
-
-# torchvision==0.21.0
-torchvision==0.24.1
+# CPU: torch==2.9.1
+# CPU: torchvision==0.24.1
 
 # pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
