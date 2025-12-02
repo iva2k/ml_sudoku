@@ -116,17 +116,14 @@ def is_valid(board: BoardOrStr, row: int, col: int, n: int) -> bool:
 
 def count_blanks(board: BoardOrStr):
     """Count the number of blank/empty cells (0s) on the board."""
-    # TODO: (now) Optimize
     board = str_to_arr(board) if isinstance(board, str) else board
-    count = 0
-    for row in range(9):
-        for col in range(9):
-            if board[row][col] == 0:
-                count += 1
-    return count
+    return np.count_nonzero(board == 0)
 
 
 def find_blank(board: Board):
+    """
+    Find the first blank/empty cell (0) on the board.
+    """
     for r in range(9):
         for c in range(9):
             if board[r, c] == 0:
@@ -136,7 +133,7 @@ def find_blank(board: Board):
 
 def find_next_blank(board: Board, row: int = None, col: int = None):
     """
-    Finds the next blank/empty cell (0) on the board.
+    Find the next blank/empty cell (0) on the board.
     - If row/col are None, finds the very first empty cell.
     - If row/col are provided, finds the first empty cell after (row, col).
     Returns a (row, col) tuple or False if no empty cells are found.
@@ -380,22 +377,46 @@ def _clue_grid(solved_grid: Board, num_clues: int = 30) -> Board:
     return clue_grid
 
 
-def get_unique_sudoku(solution: Board, num_clues: int, max_tries: int = 1000) -> Board:
+def get_unique_sudoku(solution: Board, num_clues: int, max_tries: int = 81) -> Board:
     """
-    Generates Sudoku puzzle with 1 provided solution and the given number of clues.
+    Generates a Sudoku puzzle with a unique solution by starting with a solved
+    grid and iteratively removing cells. This is more efficient than random removal.
+    The resulting puzzle will have *at least* `num_clues`.
     """
-    tries = 0
-    while tries < max_tries:
-        puzzle = _clue_grid(solution, num_clues)
-        # Check for a unique solution
-        if count_solutions(puzzle.copy()) == 1:
+    puzzle = solution.copy()
+    # Get a shuffled list of all cell coordinates
+    coords = list(np.ndindex(9, 9))
+    random.shuffle(coords)
+
+    cells_to_remove = 81 - num_clues
+    cells_unchanged = 0
+    count_sol_count = 0  # Count how many times we called expensive count_solutions()
+    first_key_at = 0
+    for r, c in coords:
+        if cells_to_remove == 0:
+            # We have removed enough cells
+            print(
+                f"DEBUG: Generated a puzzle with {num_clues} clues: {count_sol_count} calls to count_solutions(), {cells_unchanged} key cells, first key at {first_key_at}."
+            )
             return puzzle
-        tries += 1
-        if tries > 10:
-            print(f"DEBUG: slow puzzle generation for {num_clues} clues, try {tries}.")
-    raise RuntimeError(
-        f"Unable to find a {num_clues} clues puzzle with a 1 solution after {max_tries} tries."
+
+        original_val = puzzle[r, c]
+        puzzle[r, c] = 0
+        count_sol_count += 1
+        if count_solutions(puzzle.copy(), count_limit=2) == 1:
+            cells_to_remove -= 1  # Removal was successful
+        else:
+            if not first_key_at:
+                first_key_at = cells_to_remove
+            cells_unchanged += 1
+            puzzle[r, c] = (
+                original_val  # Removal created multiple solutions, so restore it
+            )
+
+    print(
+        f"DEBUG: Failed generating a puzzle with {num_clues} clues: {count_sol_count} calls to count_solutions(), {cells_unchanged} key cells, first key at {first_key_at}."
     )
+    return puzzle
 
 
 class Sudoku:
