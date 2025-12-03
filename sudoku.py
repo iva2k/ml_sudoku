@@ -188,34 +188,75 @@ def all_possible(board: BoardOrStr, row: int, col: int) -> List[int]:
 
 
 def _count_solutions(board: Board, count_limit: int = 2) -> int:
-    """Counts the number of solutions for a board up to a limit using backtracking."""
+    """
+    Optimized solution counter using Minimum Remaining Values (MRV) heuristic.
+    It tracks used numbers in sets for O(1) lookups.
+    """
     count = 0
+    empty_cells = list(zip(*np.where(board == 0)))
 
-    def _solve():
-        """Custom backtracking solver that counts soultions, limited by count_limit."""
+    # Pre-compute sets of used numbers for faster lookups
+    rows = [set(board[r, :]) - {0} for r in range(9)]
+    cols = [set(board[:, c]) - {0} for c in range(9)]
+    boxes = [[set() for _ in range(3)] for _ in range(3)]
+    for r in range(9):
+        for c in range(9):
+            if board[r, c] != 0:
+                boxes[r // 3][c // 3].add(board[r, c])
+
+    all_digits = set(range(1, 10))
+
+    def _solve_recursive(cell_idx: int):
         nonlocal count
-        blank_cell = find_next_blank(board)
-        if blank_cell is False:
+        if count >= count_limit:
+            return True
+
+        # 1. Find the most constrained cell (Minimum Remaining Values heuristic)
+        best_cell = None
+        min_options = 10
+        best_options = []
+
+        for r, c in empty_cells:
+            if board[r, c] == 0:  # Only consider unfilled cells
+                used_digits = rows[r] | cols[c] | boxes[r // 3][c // 3]
+                options = all_digits - used_digits
+                if len(options) < min_options:
+                    min_options = len(options)
+                    best_cell = (r, c)
+                    best_options = list(options)
+                    if min_options == 0:  # No solution possible down this path
+                        return False
+
+        if best_cell is None:  # No empty cells left, a solution is found
             count += 1
             return count >= count_limit
 
-        row, col = blank_cell
-        vals = all_possible(board, row, col)
-        for n in vals:
-            board[row][col] = n
-            if _solve():
+        r, c = best_cell
+        for n in best_options:
+            board[r, c] = n
+            rows[r].add(n)
+            cols[c].add(n)
+            boxes[r // 3][c // 3].add(n)
+
+            if _solve_recursive(cell_idx + 1):
                 return True
-        board[row][col] = 0  # Backtrack
+
+            # Backtrack
+            board[r, c] = 0
+            rows[r].remove(n)
+            cols[c].remove(n)
+            boxes[r // 3][c // 3].remove(n)
+
         return False
 
-    _solve()
+    _solve_recursive(0)
     return count
 
 
 def count_solutions(board: BoardOrStr, count_limit: int = 2) -> int:
     """Counts the number of solutions for a board up to a limit using backtracking."""
     board = str_to_arr(board) if isinstance(board, str) else board
-    return _count_solutions(board, count_limit)
+    return _count_solutions(board.copy(), count_limit)
 
 
 # Sudoku Solvers
