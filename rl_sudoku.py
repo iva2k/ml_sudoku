@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # rl_sudoku.py
-# pylint:disable=too-many-lines
+# pylint:disable=too-many-lines,broad-exception-caught
 
 """Sudoku RL agent using PyTorch.
 
@@ -361,6 +361,7 @@ class SudokuEnv(gym.Env):
         """Resets the environment to a new (or default) puzzle state."""
         super().reset(seed=seed, options=options)
 
+        num_clues = 0  # Initialize to a default value
         if self.fixed_puzzle:
             # Use the default puzzle
             self.initial_puzzle = self.default_puzzle.copy()
@@ -493,14 +494,13 @@ class SudokuEnv(gym.Env):
         box_idx = (box_r // 3, box_c // 3)
         if box_idx not in self.rewarded_boxes:
             box_slice = self.current_grid[box_r : box_r + 3, box_c : box_c + 3]
-            if np.all(box_slice > 0):
-                if np.array_equal(
-                    box_slice, self.solution_grid[box_r : box_r + 3, box_c : box_c + 3]
-                ):
-                    # print(f"  -> Milestone! Box {box_idx} completed correctly.")
-                    reward += reward_per_group
-                    self.rewarded_boxes.add(box_idx)
-                    self.episode_stats["completed_boxes"] += 1
+            if np.all(box_slice > 0) and np.array_equal(
+                box_slice, self.solution_grid[box_r : box_r + 3, box_c : box_c + 3]
+            ):
+                # print(f"  -> Milestone! Box {box_idx} completed correctly.")
+                reward += reward_per_group
+                self.rewarded_boxes.add(box_idx)
+                self.episode_stats["completed_boxes"] += 1
         return reward
 
     def _get_violation_count(self, grid):

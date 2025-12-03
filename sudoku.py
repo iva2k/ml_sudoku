@@ -193,7 +193,7 @@ def _count_solutions(board: Board, count_limit: int = 2) -> int:
     It tracks used numbers in sets for O(1) lookups.
     """
     count = 0
-    empty_cells = list(zip(*np.where(board == 0)))
+    empty_cells = list(zip(*np.nonzero(board == 0)))
 
     # Pre-compute sets of used numbers for faster lookups
     rows = [set(board[r, :]) - {0} for r in range(9)]
