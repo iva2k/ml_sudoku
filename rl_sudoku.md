@@ -1,4 +1,8 @@
-# RL Sudoku
+# Sudoku RL Agent
+
+This project implements a Reinforcement Learning agent to solve Sudoku puzzles.
+
+It uses a Deep Q-Network (DQN) with various architectural enhancements and training strategies like action masking, reward shaping, and curriculum learning.
 
 ## 🧠 Low-Level RL Concepts
 
@@ -230,3 +234,37 @@ To solve this, an **asynchronous puzzle generation** system was implemented usin
 3. **Dynamic Difficulty:** The main training process communicates the desired difficulty (number of clues) to the workers via shared memory (`multiprocessing.Value`). This allows the training curriculum to dynamically request harder or easier puzzles without interrupting the generation flow.
 
 This architecture effectively parallelizes the workload, using idle CPU cores to prepare high-quality training data in advance, ensuring the GPU is never left waiting and maximizing hardware utilization.
+
+## Performance Optimizations
+
+Generating millions of unique Sudoku puzzles for training and validating the agent requires highly optimized utility functions. Significant effort was invested in speeding up two critical components: `count_solutions()` and `get_unique_sudoku()`.
+
+### Optimizing `count_solutions()`
+
+The `count_solutions()` function is essential for verifying that a generated puzzle has exactly one unique solution. A naive backtracking solver can be prohibitively slow, especially on puzzles with many blank cells. The initial implementation, which took over 10 minutes with 64 calls to `count_solutions()` for a difficult generation test case, was optimized to complete the same task in under a second (around 840ms).
+
+This performance gain was achieved through a combination of algorithmic heuristics and data structure improvements:
+
+1. **Minimum Remaining Values (MRV) Heuristic**: Instead of filling blank cells in a fixed order (e.g., top-to-bottom), the solver now intelligently selects the "most constrained" cell - the one with the fewest possible valid numbers. This powerful heuristic dramatically prunes the search tree. By addressing the most difficult cells first, it forces branches of the search that lead to dead ends to fail much earlier, avoiding vast amounts of wasted computation.
+
+2. **O(1) Validity Checks with Sets**: The original solver repeatedly scanned rows, columns, and boxes to check if a move was valid. The optimized version pre-computes and maintains `set` data structures for each row, column, and 3x3 box. This allows for checking the validity of placing a number in a cell in constant O(1) average time (a simple set lookup), a significant improvement over linear scans.
+
+3. **Pre-computation of Empty Cells**: The list of all empty cells is now generated only once at the beginning of the search, rather than being rediscovered on each recursive step. This eliminates redundant scanning of the grid.
+
+### Optimizing `get_unique_sudoku()`
+
+The `get_unique_sudoku()` function generates a puzzle with a specified number of clues by removing cells from a fully solved grid. The core challenge is to remove as many cells as possible while ensuring the puzzle still has only one solution, which requires frequent calls to the expensive `count_solutions()` function. A naive approach of removing cells one by one and checking for uniqueness each time is computationally infeasible.
+
+To solve this, a highly efficient binary search-based algorithm with adaptive chunking was implemented. This approach drastically reduces the number of calls to `count_solutions()`.
+
+1. **Adaptive Chunking (Galloping)**: Instead of removing one cell at a time, the algorithm attempts to remove a large "chunk" of cells at once. The size of this chunk is adaptive: it starts large (e.g., 32 cells) when the grid is mostly full and shrinks as the puzzle becomes more sparse and "fragile." If removing the entire chunk is safe (i.e., the solution remains unique), the algorithm can make huge progress in a single step.
+
+   As the puzzle becomes more difficult (i.e., has fewer clues), the density of "key cells" that are essential for uniqueness increases. To handle this, the chunk size is aggressively reduced to 1 when the number of expensive `count_solutions()` calls grows large (e.g., over 10). This heuristic detects that the puzzle has become "fragile" and switches from a binary search to a more cautious linear scan, which is more efficient than repeatedly failing on large chunks. In special cases with very dense key cells, this saves up to 30% of calls to the solver.
+
+2. **Binary Search on Failure**: When removing a chunk is *not* safe (it introduces multiple solutions), the algorithm doesn't discard the entire chunk. Instead, it performs a binary search *within that chunk* to efficiently find the longest "safe prefix" - the maximum number of cells from the start of the chunk that can be removed together. This allows it to pinpoint the single "key cell" within the chunk that was essential for uniqueness, without having to test every cell individually.
+
+   The binary search includes a further optimization to reduce solver calls. When a prefix is found to be safe, and the remaining part of the chunk being searched is only a single cell, the algorithm can deduce by elimination that this single cell *must* be the key cell. It can then mark it as such and move on without performing an explicit, and redundant, final check on that cell, saving a valuable call to `count_solutions()`.
+
+By combining these two methods with their additional heuristics, the generator can quickly "gallop" through non-essential cells and use a precise binary search to navigate around the critical cells that uphold the puzzle's integrity. This minimizes the number of calls to `count_solutions()` and makes it practical to generate even very difficult puzzles with a low number of clues.
+
+Together with the optimization of `count_solutions()`, the speed of `get_unique_sudoku()` was improved from over 10 minutes to just 840ms for a particularly difficult test case where 64 calls to `count_solution()` were needed to find 24 key cells while generating a puzzle with 54 blanks.
