@@ -49,9 +49,10 @@ from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
     format_grid_to_string,
-    format_grid_to_strings,
+    # format_grid_to_strings,
     generate_solved_sudoku,
     get_unique_sudoku,
+    print_grids,
 )
 
 # TODO: (when needed) Adjust these during Phase 3
@@ -1171,7 +1172,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         + "\n  ".join(
             [
                 f"Training Complete {'='*60}",
-                f"Final Best Reward: {best_reward:.2f} over {total_episodes_trained} total episodes.",
+                f"Final Best Reward: {best_reward:.2f} "
+                f"over {total_episodes_trained} total episodes.",
                 f"Total Solved: {solved_count}{difficulty_summary}",
                 f"Total time: {duration_str} ({time_per_step_str} per step)",
             ]
@@ -1217,24 +1219,10 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
             break
 
     if show_boards:
-        initial_board = format_grid_to_strings(env.initial_puzzle)
-        final_board = format_grid_to_strings(env.current_grid)
-        delta_grid = env.current_grid - env.initial_puzzle
-        delta_board = format_grid_to_strings(delta_grid)
-
         # Print 3 boards horizontally, with some gap
-        gap = "    "
-        headings = ["Initial", "Final", "Moves"]
-        print(gap.join([f"{h:21s}" for h in headings]))
-
-        lines = len(initial_board)
-        print(
-            "\n".join(
-                [
-                    initial_board[i] + gap + final_board[i] + gap + delta_board[i]
-                    for i in range(lines)
-                ]
-            )
+        print_grids(
+            [env.initial_puzzle, env.current_grid, env.current_grid - env.initial_puzzle],
+            ["Initial", "Final", "Moves"]
         )
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
