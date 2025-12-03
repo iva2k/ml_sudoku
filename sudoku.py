@@ -183,8 +183,23 @@ def all_possible(board: BoardOrStr, row: int, col: int) -> List[int]:
     without violating the Sudoku rules.
     """
     board = str_to_arr(board) if isinstance(board, str) else board
-    possibilities = [n for n in range(1, 10) if _is_valid(board, row, col, n)]
-    return possibilities
+
+    # 1. Get all digits from 1 to 9
+    all_digits = {1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+    # 2. Get numbers already in the row, column, and box.
+    # Using sets is much faster than repeated list lookups.
+    row_vals = set(board[row, :])
+    col_vals = set(board[:, col])
+
+    box_r, box_c = 3 * (row // 3), 3 * (col // 3)
+    box_vals = set(board[box_r : box_r + 3, box_c : box_c + 3].flatten())
+
+    # 3. Combine them into a single set of used digits using set union.
+    used_digits = row_vals | col_vals | box_vals
+
+    # 4. The possible digits are the difference between all digits and used digits.
+    return sorted(list(all_digits - used_digits))
 
 
 def _count_solutions(board: Board, count_limit: int = 2) -> int:
@@ -285,40 +300,58 @@ def solve_brute(board: BoardOrStr) -> Optional[Board]:
 
 
 def _solve_eliminator(board: Board) -> Optional[Board]:
-    """Solves the Sudoku puzzle using backtracking and eliminator heuristic."""
-    row, col = None, None
+    """
+    Solves the Sudoku puzzle using a combination of constraint propagation (elimination)
+    and backtracking with the Minimum Remaining Values (MRV) heuristic.
+    """
+    # 1. Iteratively fill in all "naked singles" (cells with only one possibility).
     while True:
-        not_solved = find_next_blank(board)
-        if not_solved is False:
-            # Solved
-            return board
-        next_blank_cell = find_next_blank(board, row, col)
-        if next_blank_cell is False:
-            # Reached the end of board, no elimination possible, do brute-force
-            row, col = not_solved
-            vals = all_possible(board, row, col)
-            for n in vals:
-                # brute_board = copy.copy(board)
-                brute_board = board
-                brute_board[row][col] = n
-                result = _solve_eliminator(brute_board)
-                if result is not False:
-                    return result
-                brute_board[row][col] = 0
-            return False
-        row, col = next_blank_cell
-        vals = all_possible(board, row, col)
-        if len(vals) == 1:
-            board[row][col] = vals[0]
-            row, col = None, None
+        progress_made = False
+        min_options_cell = None
+        min_options_count = 10
+        min_options_values = []
 
-    return False
+        empty_cells = np.argwhere(board == 0)
+        if empty_cells.size == 0:
+            return board  # Solved
+
+        for r, c in empty_cells:
+            options = all_possible(board, r, c)
+            num_options = len(options)
+
+            if num_options == 0:
+                return False  # Invalid path, backtrack
+
+            if num_options == 1:
+                board[r, c] = options[0]
+                progress_made = True
+
+            # Keep track of the best cell for the MRV heuristic
+            if num_options < min_options_count:
+                min_options_count = num_options
+                min_options_cell = (r, c)
+                min_options_values = options
+
+        if not progress_made:
+            # No more easy singles, must backtrack/guess
+            break
+
+    # 2. If not solved, pick the best cell (MRV), and recurse for each possibility.
+    r, c = min_options_cell
+    for n in min_options_values:
+        board_copy = board.copy()
+        board_copy[r, c] = n
+        result = _solve_eliminator(board_copy)
+        if result is not False:
+            return result
+
+    return False  # All guesses for this path failed
 
 
 def solve_eliminator(board: BoardOrStr) -> Optional[Board]:
     """Solves the Sudoku puzzle using backtracking and eliminator heuristic."""
     board = str_to_arr(board) if isinstance(board, str) else board
-    return _solve_eliminator(board)
+    return _solve_eliminator(board.copy())
 
 
 # Sudoku Builder
