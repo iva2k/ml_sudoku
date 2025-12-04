@@ -473,7 +473,7 @@ def _clue_grid(solved_grid: Board, num_clues: int = 30) -> Board:
     return clue_grid
 
 
-def get_unique_sudoku(solution: Board, num_clues: int, debug: bool=False) -> Board:
+def get_unique_sudoku(solution: Board, num_clues: int, debug: bool = False) -> Board:
     """
     Generates a Sudoku puzzle with a unique solution by starting with a solved
     grid and recursively removing chunks of cells. This is much more efficient
@@ -492,7 +492,9 @@ def get_unique_sudoku(solution: Board, num_clues: int, debug: bool=False) -> Boa
     return _get_unique_sudoku(solution, num_clues, coords_to_try, debug)
 
 
-def _get_unique_sudoku(solution: Board, num_clues: int, coords_to_try, debug: bool=False) -> Board:
+def _get_unique_sudoku(
+    solution: Board, num_clues: int, coords_to_try, debug: bool = False
+) -> Board:
     """
     Generates a Sudoku puzzle with a unique solution by starting with a solved
     grid and recursively removing chunks of cells. This is much more efficient
@@ -663,30 +665,50 @@ class Sudoku:
         elif fnc == solve_eliminator:
             name = "solve_eliminator"
 
-        print()
-        print(f"Solver using method {name}")
-        print_grid(board)
-        print(f"Blanks: {count_blanks(board)}")
-        print()
+        print(
+            "\n"
+            f"Solver using method {name}, "
+            f"Blanks: {count_blanks(board)}, "
+            f"{num_iter} iterations"
+        )
         start_time = timer()
         for _i in range(num_iter):
             q = copy.copy(board)
             result = fnc(q)
+            print(".", end="", flush=True)
+        print("")
         end_time = timer()
         elapsed_time = end_time - start_time
         elapsed_time = elapsed_time / num_iter
 
         time_str = str(timedelta(seconds=elapsed_time))
         if result is not False:
-            print(f"Method {name} solved in {time_str}:")
-            print_grid(result)
+            board = str_to_arr(board) if isinstance(board, str) else board
+            sol = (
+                str_to_arr(self.solution)
+                if isinstance(self.solution, str)
+                else self.solution
+            )
+            result = str_to_arr(result) if isinstance(result, str) else result
+            print_grids(
+                [board, sol, result, result - sol],
+                ["Quiz", "Known Solution", "Solver Result", "Solver Errors"],
+            )
+            print(f"Method {name} solved in {time_str}")
         else:
-            print(f"Method {name} failed to solve")
+            board = str_to_arr(board) if isinstance(board, str) else board
+            sol = (
+                str_to_arr(self.solution)
+                if isinstance(self.solution, str)
+                else self.solution
+            )
+            print_grids([board, sol], ["Quiz", "Known Solution"])
+            print(f"Method {name} failed to solve in {time_str}")
 
 
 def test_get_unique_sudoku(debug: bool = False):
     """Test _get_unique_sudoku()."""
-    print("\n\nTesting _get_unique_sudoku(), debug={debug}")
+    print(f"Testing _get_unique_sudoku(), debug={debug}")
     testcases = [
         {
             "num_clues": 81 - 54,
@@ -752,27 +774,45 @@ def test_get_unique_sudoku(debug: bool = False):
         "\n"
     )
 
+
 def main():
     """Main function to run the Sudoku solver."""
 
+    print("\n" + "="*100)
     test_get_unique_sudoku(debug=True)
 
-    num_iter = 100
-    s = Sudoku(
-        "000308600302400058005020071586000400000007002090140000403096105001280006070000030",
-        "719358624362471958845629371586932417134867592297145863423796185951283746678514239",
-    )
-    # s = Sudoku('000260701680070090190004500820100040004602900050003028009300074040050036703018000', '435269781682571493197834562826195347374682915951743628519326874248957136763418259')
+    num_iter = 10
 
-    # TODO: (when needed) solve_eliminator fails on this sudoku:
-    # s = Sudoku("400700000080000029000009150600095000050030080000170004036200000970000040000007005", "495721836187356429263849157618495273754632981329178564536214798971583642842967315")
+    print("\n" + "="*100)
+    print("Testing Solvers\n")
+    testcases = [
+        {
+            "q": "000308600302400058005020071586000400000007002090140000403096105001280006070000030",
+            "s": "719358624362471958845629371586932417134867592297145863423796185951283746678514239",
+        },
+        {
+            "q": "000260701680070090190004500820100040004602900050003028009300074040050036703018000",
+            "s": "435269781682571493197834562826195347374682915951743628519326874248957136763418259",
+        },
+        {
+            # Super-slow for solve_brute()
+            "q": "400700000080000029000009150600095000050030080000170004036200000970000040000007005",
+            "s": "495721836187356429263849157618495273754632981329178564536214798971583642842967315",
+        },
+    ]
+    solvers = [
+        solve_eliminator,
+        solve_brute,
+    ]
+    # More difficult one:
+    for i, testcase in enumerate(testcases):
+        print(f"\nTest case {i+1:3d} of {len(testcases):3d} " + "-" * 79)
+        s = Sudoku(testcase["q"], testcase["s"])
+        for solver in solvers:
+            s.solver(s.quiz, solver, num_iter)
 
-    s.solver(s.quiz, solve_brute, num_iter)
-    s.solver(s.quiz, solve_eliminator, num_iter)
-    print()
-    print("Known solution:")
-    print_grid(s.solution)
-
+    print("\n" + "="*100)
+    print(f"Testing count_solutions, {num_iter} iterations...  ")
     start_time = timer()
     for _i in range(num_iter):
         count = count_solutions(s.quiz)
