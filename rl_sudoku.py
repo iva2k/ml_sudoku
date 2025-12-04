@@ -84,20 +84,24 @@ def _puzzle_worker(
     min_clues_shared: Synchronized,
     max_clues_shared: Synchronized,
 ):
-    """Worker process to generate valid Sudoku puzzles."""
-    while not stop_event.is_set():
-        if queue.qsize() > 50:  # Don't overfill the queue
-            time.sleep(0.1)
-            continue
+    """Worker process to generate valid Sudoku puzzles. Handles Ctrl-C gracefully."""
+    try:
+        while not stop_event.is_set():
+            if queue.qsize() > 50:  # Don't overfill the queue
+                time.sleep(0.1)
+                continue
 
-        # Read the current difficulty from shared memory
-        min_clues = min_clues_shared.value
-        max_clues = max_clues_shared.value
+            # Read the current difficulty from shared memory
+            min_clues = min_clues_shared.value
+            max_clues = max_clues_shared.value
 
-        solution = generate_solved_sudoku()
-        num_clues = random.randint(min_clues, max_clues)
-        puzzle = get_unique_sudoku(solution, num_clues)
-        queue.put((puzzle, solution, num_clues))
+            solution = generate_solved_sudoku()
+            num_clues = random.randint(min_clues, max_clues)
+            puzzle = get_unique_sudoku(solution, num_clues)
+            if puzzle is not None:
+                queue.put((puzzle, solution, num_clues))
+    except KeyboardInterrupt:
+        pass  # Exit gracefully on Ctrl-C
 
 
 class PuzzleGenerator:
@@ -1222,8 +1226,12 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
     if show_boards:
         # Print 3 boards horizontally, with some gap
         print_grids(
-            [env.initial_puzzle, env.current_grid, env.current_grid - env.initial_puzzle],
-            ["Initial", "Final", "Moves"]
+            [
+                env.initial_puzzle,
+                env.current_grid,
+                env.current_grid - env.initial_puzzle,
+            ],
+            ["Initial", "Final", "Moves"],
         )
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
