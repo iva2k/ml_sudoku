@@ -192,5 +192,79 @@
             "console": "integratedTerminal",
             "justMyCode": true
         },
+
+
+        {
+            "name": "Python: RL sudoku CNN4 0 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--model", "cnn4", 
+                "--load_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--save_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--episodes", "0",
+                "--masking",
+                "--reward_shaping",
+                "--batch_size", "512",
+                "--test_games", "265", "--test_difficulty_min", "3", "--test_difficulty_max", "55",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku CNN4 400 --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--model", "cnn4", 
+                "--load_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--save_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--episodes", "400",
+                "--masking",
+                "--reward_shaping",
+                "--batch_size", "512",
+                "--test_games", "265", "--test_difficulty_min", "3", "--test_difficulty_max", "55",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku CNN4 4k --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--model", "cnn4", 
+                "--load_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--save_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--episodes", "4000",
+                "--masking",
+                "--reward_shaping",
+                "--batch_size", "512",
+                "--test_games", "265", "--test_difficulty_min", "3", "--test_difficulty_max", "55",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: RL sudoku CNN4 50k --masking --reward_shaping",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "rl_sudoku.py",
+            "args": [
+                "--model", "cnn4", 
+                "--load_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--save_model", "modelCNN4_in_training.masking+rewardshaping.zip",
+                "--episodes", "50000",
+                "--masking",
+                "--reward_shaping",
+                "--batch_size", "512",
+                "--test_games", "265", "--test_difficulty_min", "3", "--test_difficulty_max", "55",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
     ]
 }

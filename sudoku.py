@@ -199,7 +199,7 @@ def all_possible(board: BoardOrStr, row: int, col: int) -> List[int]:
     used_digits = row_vals | col_vals | box_vals
 
     # 4. The possible digits are the difference between all digits and used digits.
-    return sorted(list(all_digits - used_digits))
+    return sorted(all_digits - used_digits)
 
 
 def _count_solutions(board: Board, count_limit: int = 2) -> int:
@@ -221,7 +221,7 @@ def _count_solutions(board: Board, count_limit: int = 2) -> int:
 
     all_digits = set(range(1, 10))
 
-    def _solve_recursive(cell_idx: int):
+    def _solve_recursive():
         nonlocal count
         if count >= count_limit:
             return True
@@ -253,7 +253,7 @@ def _count_solutions(board: Board, count_limit: int = 2) -> int:
             cols[c].add(n)
             boxes[r // 3][c // 3].add(n)
 
-            if _solve_recursive(cell_idx + 1):
+            if _solve_recursive():
                 return True
 
             # Backtrack
@@ -264,7 +264,7 @@ def _count_solutions(board: Board, count_limit: int = 2) -> int:
 
         return False
 
-    _solve_recursive(0)
+    _solve_recursive()
     return count
 
 

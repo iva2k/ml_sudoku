@@ -45,6 +45,7 @@ import torch.optim as optim
 from dqn_cnn1 import DQNSolverCNN1
 from dqn_cnn2 import DQNSolverCNN2
 from dqn_cnn3 import DQNSolverCNN3
+from dqn_cnn4 import DQNSolverCNN4
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
@@ -1345,7 +1346,7 @@ def parse_args():
         "--model",
         type=str,
         default="transformer1",
-        choices=["cnn1", "cnn2", "cnn3", "transformer1"],
+        choices=["cnn1", "cnn2", "cnn3", "cnn4", "transformer1"],
         help="Model architecture to use.",
     )
     # Training arguments
@@ -1500,6 +1501,8 @@ def main() -> int:
         solver = DQNSolverCNN2
     elif args.model == "cnn3":
         solver = DQNSolverCNN3
+    elif args.model == "cnn4":
+        solver = DQNSolverCNN4
     elif args.model == "transformer1":
         solver = DQNSolverTransformer
     else:
