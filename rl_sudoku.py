@@ -46,6 +46,7 @@ from dqn_cnn1 import DQNSolverCNN1
 from dqn_cnn2 import DQNSolverCNN2
 from dqn_cnn3 import DQNSolverCNN3
 from dqn_cnn4 import DQNSolverCNN4
+from dqn_cnn5 import DQNSolverCNN5
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
@@ -917,6 +918,12 @@ CURRICULUM_LEVELS = [
         "clues": (25, 45),
         "solve_rate_threshold": None,
         "eval_window": None,
+    },
+    {
+        "name": "Expert",
+        "clues": (19, 27),
+        "solve_rate_threshold": None,
+        "eval_window": None,
     },  # Final level
 ]
 
@@ -1353,8 +1360,8 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="transformer1",
-        choices=["cnn1", "cnn2", "cnn3", "cnn4", "transformer1"],
+        default="cnn5",
+        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "transformer1"],
         help="Model architecture to use.",
     )
     # Training arguments
@@ -1511,6 +1518,8 @@ def main() -> int:
         solver = DQNSolverCNN3
     elif args.model == "cnn4":
         solver = DQNSolverCNN4
+    elif args.model == "cnn5":
+        solver = DQNSolverCNN5
     elif args.model == "transformer1":
         solver = DQNSolverTransformer
     else:

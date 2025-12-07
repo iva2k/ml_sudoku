@@ -44,7 +44,6 @@ This model aims to combine the best of both CNNs and Transformers for Sudoku:
 
 """
 
-# import torch
 import torch
 import torch.nn as nn
 
