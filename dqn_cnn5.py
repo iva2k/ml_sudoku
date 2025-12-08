@@ -53,9 +53,7 @@ class DQNSolverCNN5(nn.Module):
     This version uses a single GlobalReasoningBlock applied iteratively.
     """
 
-    def __init__(
-        self, _input_shape, _output_size, device=None, n_iterations: int = 8
-    ):
+    def __init__(self, _input_shape, _output_size, device=None, n_iterations: int = 8):
         super().__init__()
         self.device = device
         self.n_iterations = n_iterations

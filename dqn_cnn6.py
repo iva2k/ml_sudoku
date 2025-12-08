@@ -70,7 +70,8 @@ class ACTReasoningBlock(nn.Module):
         Forward pass.
         Returns:
             - next_state (torch.Tensor): The updated feature map.
-            - halt_prob (torch.Tensor): A scalar tensor (B, 1) with the probability of halting at this step.
+            - halt_prob (torch.Tensor): A scalar tensor (B, 1) with the probability of
+              halting at this step.
         """
         next_state = self.reasoning(x)
 
@@ -127,7 +128,9 @@ class DQNSolverCNN6(nn.Module):
         ponder_cost = torch.zeros(b, device=self.device)
         state_sum = torch.zeros_like(x)
 
-        while (halt_accum.max() < self.halt_threshold) and (step_counter < self.max_steps):
+        while (halt_accum.max() < self.halt_threshold) and (
+            step_counter < self.max_steps
+        ):
             x, halt_prob = self.reasoning_block(x)
 
             # Calculate how much of the "halting budget" is left
@@ -137,7 +140,7 @@ class DQNSolverCNN6(nn.Module):
 
             halt_accum += step_prob
             ponder_cost += 1.0
-            state_sum += x * step_prob.view(b, 1, 1, 1) # Weight state by its prob
+            state_sum += x * step_prob.view(b, 1, 1, 1)  # Weight state by its prob
             step_counter += 1
 
         # Handle any remaining probability budget if max_steps was reached

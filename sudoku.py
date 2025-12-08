@@ -778,12 +778,12 @@ def test_get_unique_sudoku(debug: bool = False):
 def main():
     """Main function to run the Sudoku solver."""
 
-    print("\n" + "="*100)
+    print("\n" + "=" * 100)
     test_get_unique_sudoku(debug=True)
 
     num_iter = 10
 
-    print("\n" + "="*100)
+    print("\n" + "=" * 100)
     print("Testing Solvers\n")
     testcases = [
         {
@@ -811,7 +811,7 @@ def main():
         for solver in solvers:
             s.solver(s.quiz, solver, num_iter)
 
-    print("\n" + "="*100)
+    print("\n" + "=" * 100)
     print(f"Testing count_solutions, {num_iter} iterations...  ")
     start_time = timer()
     for _i in range(num_iter):

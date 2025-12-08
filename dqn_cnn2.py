@@ -2,12 +2,13 @@
 # dqn_cnn2.py
 
 """
-    Deep Q-Network Solver (DQN) for Sudoku
-    CNN-based with kernels aligned to Sudoku rules (row/col/box).
+Deep Q-Network Solver (DQN) for Sudoku
+CNN-based with kernels aligned to Sudoku rules (row/col/box).
 """
 
 import torch
 import torch.nn as nn
+
 
 class SudokuConstraintConv(nn.Module):
     """
@@ -22,14 +23,11 @@ class SudokuConstraintConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         # 1x9 convolution finds row patterns
-        self.row_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=(1, 9))
+        self.row_conv = nn.Conv2d(in_channels, out_channels, kernel_size=(1, 9))
         # 9x1 convolution finds column patterns
-        self.col_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=(9, 1))
+        self.col_conv = nn.Conv2d(in_channels, out_channels, kernel_size=(9, 1))
         # 3x3 stride 3 convolution finds box patterns (non-overlapping tiling)
-        self.box_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=3, stride=3)
+        self.box_conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=3)
 
         self.bn = nn.BatchNorm2d(out_channels * 3)
         self.relu = nn.ReLU(inplace=True)
@@ -78,7 +76,7 @@ class DQNSolverCNN2(nn.Module):
         self.mix_conv = nn.Sequential(
             nn.Conv2d(192, 128, kernel_size=1),
             nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
 
         # 3. Second Pass: Deepen reasoning on mixed features
@@ -90,7 +88,7 @@ class DQNSolverCNN2(nn.Module):
             nn.Flatten(),
             nn.Linear(192 * 9 * 9, 1024),
             nn.ReLU(inplace=True),
-            nn.Linear(1024, output_size)
+            nn.Linear(1024, output_size),
         )
 
     def forward(self, x):
