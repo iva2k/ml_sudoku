@@ -200,6 +200,39 @@ As the network gets deeper to capture more complex relationships across the Sudo
 
 A residual block allows the network to bypass one or more layers, simply passing the input through. This makes it easier for gradients to flow during backpropagation and allows the model to learn an "identity" function if a block of layers is not useful. For Sudoku, this means we can build a deeper, more powerful CNN that can better integrate local (3x3 box) and global (full grid) information without sacrificing training stability.
 
+### Model Architecture Evolution: From CNNs to Adaptive Transformers
+
+The project has evolved through several model architectures, each designed to address the weaknesses of its predecessor and better capture the logical structure of Sudoku.
+
+#### `cnn4`: Hybrid CNN-Attention
+
+This model combines the strengths of CNNs and Transformers.
+
+* **CNN for Perception (`SudokuConstraintConv`)**: It uses specialized convolutions with kernels shaped for Sudoku's geometry (1x9 for rows, 9x1 for columns, 3x3 for boxes). This provides a powerful inductive bias, allowing the model to "see" the basic constraints of the game without learning them from scratch.
+* **Attention for Reasoning (`GlobalReasoningBlock`)**: After perception, it uses a Transformer-style self-attention mechanism. This allows every cell to look at every other cell and dynamically decide which are most important for updating its own state, which is critical for solving complex, non-local patterns.
+* **Iterative Refinement**: The model stacks multiple `GlobalReasoningBlock`s. Each block represents one step of logical deduction, allowing the model to perform chained reasoning.
+
+#### `cnn5`: Recurrent Reasoning
+
+This model builds upon `cnn4` by addressing a key limitation: the fixed depth of logical reasoning. While stacking reasoning blocks allows for chained deductions, the number of steps is static.
+
+`cnn5` replaces the fixed stack of reasoning blocks with a single, recurrently applied `GlobalReasoningBlock`.
+
+* **Parameter Efficiency**: Instead of learning N separate reasoning blocks, the model learns a single, more powerful, and generalizable reasoning unit that is applied repeatedly.
+* **Deeper, Fixed Reasoning**: The number of iterations becomes a hyperparameter that controls the maximum "thinking time" or logical depth the model is allowed. This gives the model a deeper, fixed-length "thinking time" to solve complex puzzles.
+
+#### `cnn6`: Adaptive Computation Time (ACT)
+
+This model introduces a truly dynamic reasoning process, allowing the model to learn *when to stop thinking*. It builds on the recurrent structure of `cnn5` but adds a halting mechanism inspired by the "Adaptive Computation Time" (ACT) paper.
+
+* **True Adaptive Computation**: For each input puzzle, it can dynamically decide to perform more reasoning steps if the logical path is deep, or halt early if the state is simple.
+* **How it Works**:
+  1. **ACTReasoningBlock**: A modified reasoning block that, in addition to updating the board state, outputs a "halting probability" for the current step.
+  2. **Dynamic `while` loop**: The `forward` pass contains a `while` loop that iteratively applies the reasoning block. The loop continues as long as the cumulative halting probability is below a threshold and a maximum number of steps has not been exceeded.
+  3. **Ponder Cost**: To train this behavior, a "ponder cost" is added to the main RL loss function. This cost is simply the number of steps the model took. It penalizes the model for thinking for too long, forcing it to balance accuracy with computational efficiency.
+
+This architecture is the most sophisticated, as it allows the model's computational depth to adapt to the logical depth of the problem itself.
+
 ### Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:

@@ -47,6 +47,7 @@ from dqn_cnn2 import DQNSolverCNN2
 from dqn_cnn3 import DQNSolverCNN3
 from dqn_cnn4 import DQNSolverCNN4
 from dqn_cnn5 import DQNSolverCNN5
+from dqn_cnn6 import DQNSolverCNN6
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
@@ -68,6 +69,7 @@ MEMORY_CAPACITY = 10000
 BATCH_SIZE = 128  # Larger batch size can stabilize training
 LR = 0.00025  # Slightly higher learning rate
 MAX_EPISODES = 50000
+PONDER_PENALTY = 0.01  # Penalty for each "thinking" step in ACT models
 WEIGHT_DECAY = 0.01
 
 # Large Negative reward to suppress known illegal actions
@@ -746,12 +748,18 @@ def get_action(
         with torch.no_grad():
             # Add batch dimension and get Q-values
             state_t = torch.from_numpy(state).to(policy_net.device)
-            one_hot_state = state_to_one_hot(state_t).unsqueeze(0)
-            q_values = policy_net(one_hot_state)
+            one_hot_state = state_to_one_hot(state_t)
+
+            # Handle models that return multiple values (like ACT ponder cost)
+            output = policy_net(one_hot_state.unsqueeze(0))
+            if isinstance(output, tuple):
+                q_values = output[0]
+            else:
+                q_values = output
 
             if use_masking:
                 # Apply mask: set Q-values of illegal actions to a very small number
-                # Transfer state to GPU and generate mask on GPU
+                # Generate mask on GPU
                 mask_t = generate_legal_mask_gpu(state_t)
 
                 masked_q = q_values.clone()
@@ -771,6 +779,7 @@ def optimize_model(
     optimizer,
     transitions: List[Transition],
     gamma,
+    ponder_penalty,
     use_masking: bool = False,
 ):
     """
@@ -802,7 +811,14 @@ def optimize_model(
     reward_batch = torch.tensor(batch.reward, dtype=torch.float32, device=device)
 
     # Compute Q(s_t, a) - the Q-values for the actions taken
-    q_values = policy_net(state_batch)
+    # Handle models that return multiple values (like ACT ponder cost)
+    output = policy_net(state_batch)
+    if isinstance(output, tuple):
+        q_values, ponder_cost = output
+    else:
+        q_values = output
+        ponder_cost = None
+
     state_action_values = q_values.gather(1, action_batch)
 
     # Compute V(s_{t+1}) = max_a Q(s_{t+1}, a) for non-terminal next states
@@ -817,7 +833,12 @@ def optimize_model(
         non_final_next_states_t = state_to_one_hot(non_final_next_states_gpu)
 
         with torch.no_grad():
-            target_q_values = target_net(non_final_next_states_t)
+            # Handle models that return multiple values
+            target_output = target_net(non_final_next_states_t)
+            if isinstance(target_output, tuple):
+                target_q_values = target_output[0]
+            else:
+                target_q_values = target_output
 
             if use_masking:
                 # Generate masks for the entire batch on the GPU
@@ -841,6 +862,11 @@ def optimize_model(
     # Compute Huber loss (a robust form of MSE) - less sensitive to outliers
     criterion = nn.SmoothL1Loss()
     loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+    # Add the ponder cost for ACT models
+    if ponder_cost is not None:
+        # We want to minimize the number of steps, so we add it to the loss
+        loss += ponder_penalty * ponder_cost.mean()
 
     # Optimize the model
     optimizer.zero_grad()
@@ -1063,6 +1089,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     optimizer,
                     transitions,
                     args.gamma,
+                    args.ponder_penalty,
                     args.masking,
                 )
                 epoch_steps_done += 1
@@ -1097,6 +1124,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     optimizer,
                     episode_transitions,
                     args.gamma,
+                    args.ponder_penalty,
                     args.masking,
                 )
 
@@ -1207,8 +1235,12 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
     for _step in range(81):  # Max 81 steps
         with torch.no_grad():
             state_t = torch.from_numpy(state).to(args.device)
-            one_hot_state = state_to_one_hot(state_t).unsqueeze(0)
-            q_values = policy_net(one_hot_state)
+            one_hot_state = state_to_one_hot(state_t)
+            output = policy_net(one_hot_state.unsqueeze(0))
+            if isinstance(output, tuple):
+                q_values = output[0]
+            else:
+                q_values = output
 
             if args.masking:
                 # Use the GPU-accelerated version for masking.
@@ -1360,8 +1392,8 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="cnn5",
-        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "transformer1"],
+        default="cnn6",
+        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "cnn6", "transformer1"],
         help="Model architecture to use.",
     )
     # Training arguments
@@ -1424,6 +1456,13 @@ def parse_args():
         default=WEIGHT_DECAY,
         help="Weight decay for the AdamW optimizer.",
     )
+    parser.add_argument(
+        "--ponder_penalty",
+        type=float,
+        default=PONDER_PENALTY,
+        help="Penalty for each computation step in ACT models (e.g., cnn6).",
+    )
+
     # Epsilon-greedy arguments
     parser.add_argument(
         "--eps_start",
@@ -1520,6 +1559,8 @@ def main() -> int:
         solver = DQNSolverCNN4
     elif args.model == "cnn5":
         solver = DQNSolverCNN5
+    elif args.model == "cnn6":
+        solver = DQNSolverCNN6
     elif args.model == "transformer1":
         solver = DQNSolverTransformer
     else:
