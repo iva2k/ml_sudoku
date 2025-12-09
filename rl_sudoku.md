@@ -215,6 +215,8 @@ This model introduces a truly dynamic reasoning process, allowing the model to l
 
 This architecture is the most sophisticated, as it allows the model's computational depth to adapt to the logical depth of the problem itself.
 
+* **Ponder Cost Annealing**: A fixed ponder penalty can be too restrictive early in training, as it punishes the model for "thinking" before it has even learned the basic rules. To solve this, we use **Ponder Cost Annealing**. The training starts with a very low (or zero) penalty, allowing the model to freely explore its computational depth to learn the task. The penalty is then gradually increased over a set number of episodes, which slowly encourages the model to become more computationally efficient *after* it has developed a foundational understanding of the game. This leads to more stable training and better final performance.
+
 ### Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:

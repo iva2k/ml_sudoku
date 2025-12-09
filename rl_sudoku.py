@@ -1192,6 +1192,10 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
                 # 7. Perform optimization step
                 if len(memory) >= args.batch_size:
+                    # Ponder Cost Annealing: Calculate current penalty based on training progress
+                    progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
+                    current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
+
                     batch_data = memory.sample(args.batch_size)
                     optimize_model(
                         policy_net,
@@ -1200,7 +1204,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                         memory,
                         batch_data,
                         args.gamma,
-                        args.ponder_penalty,
+                        current_ponder_penalty,
                         args.masking,
                     )
                 epoch_steps_done += 1
@@ -1236,6 +1240,10 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 else:
                     batch_data = episode_transitions
 
+                # Use the same annealed ponder penalty for the HER pass
+                progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
+                current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
+
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
                 optimize_model(
@@ -1245,7 +1253,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     memory,
                     batch_data,
                     args.gamma,
-                    args.ponder_penalty,
+                    current_ponder_penalty,
                     args.masking,
                 )
 
@@ -1581,7 +1589,19 @@ def parse_args():
         "--ponder_penalty",
         type=float,
         default=PONDER_PENALTY,
-        help="Penalty for each computation step in ACT models (e.g., cnn6).",
+        help="Final penalty for each computation step in ACT models (e.g., cnn6).",
+    )
+    parser.add_argument(
+        "--ponder_penalty_start",
+        type=float,
+        default=0.0,
+        help="Starting ponder penalty for annealing.",
+    )
+    parser.add_argument(
+        "--ponder_penalty_anneal_episodes",
+        type=int,
+        default=5000,
+        help="Number of episodes to anneal the ponder penalty over.",
     )
 
     # Epsilon-greedy arguments
