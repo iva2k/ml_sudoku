@@ -53,9 +53,11 @@ from dqn_transformer import DQNSolver as DQNSolverTransformer
 from sudoku import (
     format_grid_to_string,
     # format_grid_to_strings,
+    arr_to_str,
     generate_solved_sudoku,
     get_unique_sudoku,
     print_grids,
+    str_to_arr,
 )
 
 # TODO: (when needed) Adjust these during Phase 3
@@ -103,7 +105,10 @@ def _puzzle_worker(
             num_clues = random.randint(min_clues, max_clues)
             puzzle = get_unique_sudoku(solution, num_clues)
             if puzzle is not None:
-                queue.put((puzzle, solution, num_clues))
+                # Serialize numpy arrays to strings to minimize memory use in pipe
+                puzzle_str = arr_to_str(puzzle)
+                solution_str = arr_to_str(solution)
+                queue.put((puzzle_str, solution_str, num_clues))
     except KeyboardInterrupt:
         pass  # Exit gracefully on Ctrl-C
 
@@ -154,9 +159,12 @@ class PuzzleGenerator:
                 p.terminate()  # Force terminate if join fails
         print("Puzzle workers stopped.")
 
-    def get_puzzle(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_puzzle(self) -> Tuple[np.ndarray, np.ndarray, int]:
         """Retrieves a pre-generated puzzle from the queue."""
-        return self.puzzle_queue.get()  # This will block until a puzzle is available
+        # This will block until a puzzle is available
+        puzzle_str, solution_str, num_clues = self.puzzle_queue.get()
+        # Deserialize strings back to numpy arrays
+        return str_to_arr(puzzle_str), str_to_arr(solution_str), num_clues
 
     def set_difficulty(self, min_clues: int, max_clues: int):
         """Atomically updates the difficulty range for the workers."""
