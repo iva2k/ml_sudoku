@@ -80,6 +80,7 @@ TEST_GAMES_REPEAT = 5
 TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
+EXPLORE_MASKING_GPU = True  # Use GPU for exploration masking
 
 def _puzzle_worker(
     queue: mp.Queue,
@@ -734,9 +735,14 @@ def get_action(
     if random.random() < current_epsilon:
         # Explore: Choose a random action
         if use_masking:
-            # Sample only from legal actions
-            mask = generate_legal_mask(state)
-            legal_actions = np.nonzero(mask)[0]
+            # Sample only from legal actions using the faster GPU version
+            if EXPLORE_MASKING_GPU:  # Only use GPU masking if available:
+                state_t = torch.from_numpy(state).to(policy_net.device)
+                mask_t = generate_legal_mask_gpu(state_t)
+                legal_actions = torch.nonzero(mask_t, as_tuple=False).squeeze().cpu().numpy()
+            else:
+                mask = generate_legal_mask(state)
+                legal_actions = np.nonzero(mask)[0]
             if len(legal_actions) == 0:
                 # No legal moves are possible (board is full). Signal to terminate.
                 return None, new_epsilon
