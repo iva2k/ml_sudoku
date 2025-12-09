@@ -1153,6 +1153,10 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 min_c, max_c = CURRICULUM_LEVELS[curriculum_level]["clues"]
                 env.puzzle_generator.set_difficulty(min_c, max_c)
 
+            # Ponder Cost Annealing: Calculate current penalty for this episode
+            progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
+            current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
+
             # 2. Reset the environment and get initial state
             state, num_clues, _info = env.reset()
 
@@ -1200,10 +1204,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
                 # 7. Perform optimization step
                 if len(memory) >= args.batch_size:
-                    # Ponder Cost Annealing: Calculate current penalty based on training progress
-                    progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
-                    current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
-
                     batch_data = memory.sample(args.batch_size)
                     optimize_model(
                         policy_net,
@@ -1248,10 +1248,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 else:
                     batch_data = episode_transitions
 
-                # Use the same annealed ponder penalty for the HER pass
-                progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
-                current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
-
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
                 optimize_model(
@@ -1293,10 +1289,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
                 print(
                     f"Episode {i_episode:6d}: "
-                    f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
+                    # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
+                    f"Level: {curriculum_level:2d}/{len(CURRICULUM_LEVELS):2d}, "
                     f"Steps: {episode_steps:3d}, "
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
+                    f"Ponder: {current_ponder_penalty:.4f}, "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
