@@ -176,24 +176,6 @@ If we went another way and allowed agent to make wrong moves, we would need to d
 
 This approach ensures that the agent only learns from sequences of moves that are on a valid path to the correct solution, making training more efficient and focused.
 
-### Hindsight Experience Replay (HER)
-
-Standard DQN training involves sampling random past experiences from a large replay buffer. While effective, this method treats all experiences equally and learns from them in a disconnected fashion.
-
-**Hindsight Experience Replay (HER)** is a technique that leverages the outcome of an entire episode to provide more focused training. After an episode concludes, we have a complete trajectory of moves that led to either a success (solved puzzle) or a failure (unsolved board). This complete story is a powerful learning signal.
-
-#### HER Implementation
-
-Our implementation of HER works as follows:
-
-1. **Collect Episode Trajectory:** During an episode, every transition `(state, action, reward, next_state)` is stored in a temporary list, `episode_transitions`.
-2. **End-of-Episode Training:** Once the episode finishes (win or lose), we perform an **additional, immediate optimization step**.
-3. **Focused Learning:** The `optimize_model` function is called with the entire `episode_transitions` list. This forces the agent to perform a gradient update based on the full sequence of events.
-   * For a **successful episode**, this reinforces the entire chain of moves that led to the large final reward.
-   * For a **failed episode**, this reinforces the penalties for the incorrect moves that led to a dead end.
-
-This approach provides immediate, contextual feedback to the agent, helping it learn much more quickly which sequences of actions are promising and which are not, rather than waiting for those transitions to be randomly sampled from the buffer over time.
-
 ### Residual Connections for Deeper Networks
 
 As the network gets deeper to capture more complex relationships across the Sudoku grid, it can become harder to train due to issues like the vanishing gradient problem. To combat this, we can introduce **Residual Connections** (or skip connections), a core concept from Residual Networks (ResNets).
@@ -301,3 +283,29 @@ To solve this, a highly efficient binary search-based algorithm with adaptive ch
 By combining these two methods with their additional heuristics, the generator can quickly "gallop" through non-essential cells and use a precise binary search to navigate around the critical cells that uphold the puzzle's integrity. This minimizes the number of calls to `count_solutions()` and makes it practical to generate even very difficult puzzles with a low number of clues.
 
 Together with the optimization of `count_solutions()`, the speed of `get_unique_sudoku()` was improved from over 10 minutes to just 840ms for a particularly difficult test case where 64 calls to `count_solution()` were needed to find 24 key cells while generating a puzzle with 54 blanks.
+
+## Advanced Training Techniques
+
+While the model architecture is crucial, its performance is significantly enhanced
+by the training methodology implemented in `rl_sudoku.py`.
+
+* **Prioritized Experience Replay (PER)**: Instead of sampling training data
+  uniformly from the replay buffer, PER gives priority to transitions where the
+  model's prediction was most wrong (i.e., had a high TD-error). This focuses
+  training on the most "surprising" and informative experiences, which
+  accelerates learning. To counteract the bias introduced by this non-uniform
+  sampling, PER uses Importance Sampling (IS) weights to scale the loss during
+  backpropagation, ensuring the training remains stable.
+
+* **Hindsight Experience Replay (HER)**: Standard DQN training involves sampling
+  random, disconnected past experiences. HER enhances this by leveraging the
+  outcome of an entire episode for more focused training. After an episode
+  concludes (win or lose), its complete trajectory is used for an immediate,
+  extra training pass.
+  * For a **successful episode**, this reinforces the entire chain of moves that
+    led to the large final reward.
+  * For a **failed episode**, this reinforces the penalties for the incorrect
+    moves that led to a dead end.
+  This approach provides immediate, contextual feedback, helping the agent learn
+  much more quickly which sequences of actions are promising and which are not,
+  rather than waiting for those transitions to be randomly sampled over time.

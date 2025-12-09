@@ -599,24 +599,110 @@ class SudokuEnv(gym.Env):
         """Clean up resources."""
 
 
-class ReplayBuffer:
-    """Stores experience tuples to stabilize training."""
+class SumTree:
+    """
+    A binary tree data structure where the value of a parent node is the sum of its
+    children. It is used for efficient sampling from a probability distribution.
+    """
 
-    def __init__(self, capacity):
-        self.memory = deque([], maxlen=capacity)
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        # Tree is 1-indexed, size is 2*capacity - 1
+        self.tree = np.zeros(2 * capacity - 1)
+        # Data is stored in the second half of the tree array
+        self.data = np.zeros(capacity, dtype=object)
+        self.write = 0  # Next index to write to
+        self.n_entries = 0
+
+    def _propagate(self, idx: int, change: float):
+        """Update the tree upwards from a leaf node."""
+        parent = (idx - 1) // 2
+        self.tree[parent] += change
+        if parent != 0:
+            self._propagate(parent, change)
+
+    def _retrieve(self, idx: int, s: float) -> int:
+        """Find sample on leaf node."""
+        left = 2 * idx + 1
+        right = left + 1
+        if left >= len(self.tree):
+            return idx
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        return self._retrieve(right, s - self.tree[left])
+
+    def total(self) -> float:
+        """Total priority sum."""
+        return self.tree[0]
+
+    def add(self, p: float, data: Any):
+        """Store priority and sample."""
+        idx = self.write + self.capacity - 1
+        self.data[self.write] = data
+        self.update(idx, p)
+        self.write += 1
+        if self.write >= self.capacity:
+            self.write = 0
+        if self.n_entries < self.capacity:
+            self.n_entries += 1
+
+    def update(self, idx: int, p: float):
+        """Update priority of a sample."""
+        change = p - self.tree[idx]
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    def get(self, s: float) -> Tuple[int, float, Any]:
+        """Get a sample from the tree."""
+        idx = self._retrieve(0, s)
+        data_idx = idx - self.capacity + 1
+        return (idx, self.tree[idx], self.data[data_idx])
+
+
+class PrioritizedReplayBuffer:
+    """A Replay Buffer that samples transitions based on their TD-error (priority)."""
+
+    def __init__(self, capacity: int, alpha: float = 0.6):
+        self.tree = SumTree(capacity)
+        self.capacity = capacity
+        self.alpha = alpha  # Priority exponent
+        self.epsilon = 0.01  # Small constant to ensure non-zero priority
+        self.max_priority = 1.0
 
     def push(self, *args):
-        """Save a transition"""
-        self.memory.append(Transition(*args))
+        """Adds a new transition with maximum priority to ensure it gets sampled."""
+        # New transitions are given max priority to guarantee they are trained on at least once
+        priority = self.max_priority
+        self.tree.add(priority, Transition(*args))
 
-    def sample(self, batch_size):
-        """Returns a random batch of transitions."""
-        if len(self.memory) < batch_size:
-            return None
-        return random.sample(self.memory, batch_size)
+    def sample(
+        self, batch_size: int, beta: float = 0.4
+    ) -> Tuple[List[Transition], np.ndarray, np.ndarray]:
+        """Sample a batch, returning transitions, indices, and IS weights."""
+        batch, indices, priorities = [], [], []
+        segment = self.tree.total() / batch_size
+
+        for i in range(batch_size):
+            s = random.uniform(segment * i, segment * (i + 1))
+            idx, p, data = self.tree.get(s)
+            batch.append(data)
+            indices.append(idx)
+            priorities.append(p)
+
+        sampling_probabilities = np.array(priorities) / self.tree.total()
+        is_weights = np.power(self.tree.n_entries * sampling_probabilities, -beta)
+        is_weights /= is_weights.max()  # Normalize for stability
+        return batch, np.array(indices), is_weights
 
     def __len__(self):
-        return len(self.memory)
+        return self.tree.n_entries
+
+    def update_priorities(self, indices: np.ndarray, priorities: np.ndarray):
+        """Update priorities of sampled transitions."""
+        for idx, p in zip(indices, priorities):
+            priority = (p + self.epsilon) ** self.alpha
+            self.tree.update(idx, priority)
+            self.max_priority = max(self.max_priority, priority)
 
 
 class DifficultyHistogram:
@@ -739,10 +825,12 @@ def get_action(
             if EXPLORE_MASKING_GPU:  # Only use GPU masking if available:
                 state_t = torch.from_numpy(state).to(policy_net.device)
                 mask_t = generate_legal_mask_gpu(state_t)
-                legal_actions = torch.nonzero(mask_t, as_tuple=False).squeeze().cpu().numpy()
+                # .squeeze() can create a 0-dim tensor if there's only one legal move.
+                # np.atleast_1d() ensures it's always an array.
+                legal_actions = np.atleast_1d(torch.nonzero(mask_t, as_tuple=False).squeeze().cpu().numpy())
             else:
                 mask = generate_legal_mask(state)
-                legal_actions = np.nonzero(mask)[0]
+                legal_actions = np.atleast_1d(np.nonzero(mask)[0])
             if len(legal_actions) == 0:
                 # No legal moves are possible (board is full). Signal to terminate.
                 return None, new_epsilon
@@ -783,18 +871,22 @@ def optimize_model(
     policy_net,
     target_net,
     optimizer,
-    transitions: List[Transition],
+    memory,
+    batch_data,
     gamma,
     ponder_penalty,
     use_masking: bool = False,
 ):
     """
     Performs one step of optimization on the Policy Network.
-
-    BELLMAN LOSS AND BACKPROP
-
-    :param transitions: List of transitions to train on.
+    Handles both standard and prioritized replay.
     """
+    is_per = isinstance(memory, PrioritizedReplayBuffer)
+    if is_per:
+        transitions, indices, is_weights = batch_data
+        is_weights_t = torch.tensor(is_weights, dtype=torch.float32, device=policy_net.device)
+    else:
+        transitions = batch_data
 
     if not transitions:
         return
@@ -868,6 +960,17 @@ def optimize_model(
     # Compute Huber loss (a robust form of MSE) - less sensitive to outliers
     criterion = nn.SmoothL1Loss()
     loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+    # For PER, we need per-element losses to update priorities.
+    # We only update priorities for batches that were actually sampled from the buffer
+    # (i.e., when indices are available). The HER pass will have indices=None.
+    if is_per:
+        with torch.no_grad():
+            td_error = torch.abs(state_action_values - expected_state_action_values.unsqueeze(1))
+            if indices is not None:
+                memory.update_priorities(indices, td_error.cpu().numpy().flatten())
+
+        # Apply importance sampling weights
+        loss = (loss * is_weights_t).mean()
 
     # Add the ponder cost for ACT models
     if ponder_cost is not None:
@@ -1088,16 +1191,18 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 episode_reward += reward
 
                 # 7. Perform optimization step
-                transitions = memory.sample(args.batch_size)
-                optimize_model(
-                    policy_net,
-                    target_net,
-                    optimizer,
-                    transitions,
-                    args.gamma,
-                    args.ponder_penalty,
-                    args.masking,
-                )
+                if len(memory) >= args.batch_size:
+                    batch_data = memory.sample(args.batch_size)
+                    optimize_model(
+                        policy_net,
+                        target_net,
+                        optimizer,
+                        memory,
+                        batch_data,
+                        args.gamma,
+                        args.ponder_penalty,
+                        args.masking,
+                    )
                 epoch_steps_done += 1
                 episode_steps += 1
 
@@ -1122,13 +1227,23 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             # perform an extra training pass on its full trajectory. This provides immediate
             # feedback on the outcome.
             if episode_transitions:
+                # For PER, we need to construct a valid batch_data tuple.
+                # Since this is an out-of-band training pass (not sampled from the buffer),
+                # we can use an importance sampling weight of 1.0 for all transitions.
+                # The indices are not used for priority updates in this case, so they can be None.
+                if isinstance(memory, PrioritizedReplayBuffer):
+                    batch_data = (episode_transitions, None, np.ones(len(episode_transitions)))
+                else:
+                    batch_data = episode_transitions
+
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
                 optimize_model(
                     policy_net,
                     target_net,
                     optimizer,
-                    episode_transitions,
+                    memory,
+                    batch_data,
                     args.gamma,
                     args.ponder_penalty,
                     args.masking,
@@ -1639,7 +1754,7 @@ def main() -> int:
         amsgrad=True,
         weight_decay=args.weight_decay,
     )
-    memory = ReplayBuffer(args.memory_capacity)
+    memory = PrioritizedReplayBuffer(args.memory_capacity)
 
     # Load a pre-trained model if specified
     if checkpoint:  # args.load_model
