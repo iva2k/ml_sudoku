@@ -1292,7 +1292,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
                 # Log the ponder steps from the more representative HER pass
-                ponder_steps = optimize_model(
+                _her_ponder_steps = optimize_model(
                     policy_net,
                     target_net,
                     optimizer,

@@ -68,7 +68,8 @@ class ACTReasoningBlock(nn.Module):
             nn.Sigmoid(),
         )
         # Initialize the bias of the final linear layer to encourage a starting probability
-        # around 0.27 (sigmoid(-1.0)). This starts the model with ~4 steps, allowing bidirectional learning.
+        # around 0.27 (sigmoid(-1.0)). This starts the model with ~4 steps,
+        # allowing bidirectional learning.
         if halting_bias is not None:
             nn.init.constant_(self.halting_gate[2].bias, halting_bias)
 
