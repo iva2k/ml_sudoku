@@ -164,12 +164,14 @@ class DQNSolverCNN6(nn.Module):
             # Update the mask for the next iteration
             is_running_mask = halt_accum.squeeze(-1) < self.halt_threshold
 
-        # Handle any remaining probability budget if max_steps was reached
-        # This ensures the probabilities for each sample sum to 1.
+        # Differentiable Ponder Cost Calculation (Required for the ACT Method)
+        # The remainder is the "leftover" probability budget.
         remainder = 1.0 - halt_accum
-        state_sum += x * remainder.view(b, 1, 1, 1)
-        # Add final step cost for those still running
-        ponder_cost += is_running_mask.float()
+        # The final state sum includes the state weighted by the remainder.
+        state_sum += prev_x * remainder.view(b, 1, 1, 1)
+        # The total ponder cost is the number of steps taken (ponder_cost) plus the remainder.
+        # This makes the cost directly and differentiably dependent on the halt probabilities.
+        ponder_cost += remainder.squeeze(-1)
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)
