@@ -217,6 +217,24 @@ This architecture is the most sophisticated, as it allows the model's computatio
 
 * **Ponder Cost Annealing**: A fixed ponder penalty can be too restrictive early in training, as it punishes the model for "thinking" before it has even learned the basic rules. To solve this, we use **Ponder Cost Annealing**. The training starts with a very low (or zero) penalty, allowing the model to freely explore its computational depth to learn the task. The penalty is then gradually increased over a set number of episodes, which slowly encourages the model to become more computationally efficient *after* it has developed a foundational understanding of the game. This leads to more stable training and better final performance.
 
+#### ACT Implementation Details & Preliminary Results
+
+The `cnn6` model implements a sophisticated ACT mechanism that changes number of reasoning steps, adjusting the "thinking" duration:
+
+1. **Halting Gate**: A small MLP within the reasoning block that outputs a halting probability based on the current board state's statistics (mean and standard deviation of features).
+2. **Dynamic Loop**: The reasoning block is applied recurrently. For each sample in the batch, execution continues until the cumulative halting probability reaches a threshold (e.g., 0.99) or the maximum step count (16) is reached.
+3. **Two-Pass Optimization**: To prevent the strong Reinforcement Learning gradients (from rewards like +100) from drowning out the delicate Ponder Cost gradients, optimization is performed in two passes. First, the RL loss updates the whole network. Second, the reasoning weights are frozen, and the Ponder loss updates only the halting gate.
+
+**Preliminary Results (Early Training ~800 Episodes):**
+
+* **Superior Trainability**: `cnn6` demonstrates significantly better convergence properties than previous architectures (`cnn4`, `cnn5`), successfully advancing to Curriculum Level 2 (Easy/Medium) where others stagnated at Level 1.
+* **Ponder Exploration**: Around episode 400, the model begins to explore the trade-off between thinking time and accuracy. Ponder steps vary between 2 and 17, with occasional intermediate values.
+* **Reward Correlation**: Currently, solved puzzles are highly correlated with maximum pondering (17 steps). The model appears to be learning that "thinking longer" maximizes the probability of a correct solution.
+
+**Known Issue - The "Lockstep" Anomaly:**
+
+Despite the architecture being designed for per-sample adaptive computation (using `GroupNorm` instead of `BatchNorm`, and independent halting logic), training logs reveal that the `min`, `mean`, and `max` ponder steps within a batch are always identical. This indicates that all puzzles in a batch are halting at the exact same step. While the *number* of steps changes from batch to batch (adapting to the general difficulty or gradient updates), the *intra-batch* variance is zero. This suggests a subtle homogenization of features or gradients that forces the batch to act as a single unit, which remains an open area for investigation and fixing.
+
 ### Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:
