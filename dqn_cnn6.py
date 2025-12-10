@@ -129,20 +129,37 @@ class DQNSolverCNN6(nn.Module):
         # A mask to track which samples are still running
         is_running_mask = torch.ones(b, device=self.device, dtype=torch.bool)
 
-        for step_counter in range(self.max_steps):
+        # This will be used to store the state *before* the reasoning block is applied
+        prev_x = x
+
+        for _step_counter in range(self.max_steps):
             # Only update states for running samples
             x_running = x[is_running_mask]
             if x_running.numel() == 0:
                 break  # All samples have halted
 
-            x, halt_prob = self.reasoning_block(x)
+            # --- CRITICAL FIX for In-place Operation Error ---
+            # Create a new tensor for the next state to avoid in-place modification.
+            x_next = x.clone()
+            # Apply the reasoning block only to the running samples.
+            x_next_running, halt_prob_running = self.reasoning_block(x_running)
+            # Update the next state tensor only at the running indices.
+            x_next[is_running_mask] = x_next_running
+            # The state for the next iteration is this new tensor.
+            x = x_next
 
-            # The probability for this step is capped by the remaining budget
-            step_prob = torch.min(halt_prob, 1.0 - halt_accum)
+            # The probability for this step is capped by the remaining budget.
+            # We only update probabilities for the running samples.
+            step_prob = torch.min(halt_prob_running, 1.0 - halt_accum[is_running_mask])
 
-            halt_accum += step_prob
+            halt_accum[is_running_mask] += step_prob
             ponder_cost += is_running_mask.float()
-            state_sum += x * step_prob.view(b, 1, 1, 1)  # Weight state by its prob
+            # The state sum must be weighted by the state *before* the reasoning step,
+            # not after. This links the halt probability to the state that produced it.
+            state_sum[is_running_mask] += prev_x[is_running_mask] * step_prob.view(
+                -1, 1, 1, 1
+            )
+            prev_x = x  # Update prev_x for the next iteration
 
             # Update the mask for the next iteration
             is_running_mask = halt_accum.squeeze(-1) < self.halt_threshold
@@ -151,7 +168,8 @@ class DQNSolverCNN6(nn.Module):
         # This ensures the probabilities for each sample sum to 1.
         remainder = 1.0 - halt_accum
         state_sum += x * remainder.view(b, 1, 1, 1)
-        ponder_cost += is_running_mask.float()  # Add final step cost for those still running
+        # Add final step cost for those still running
+        ponder_cost += is_running_mask.float()
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)

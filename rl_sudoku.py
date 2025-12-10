@@ -1314,7 +1314,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"/C:{stats['completed_cols']}"
                     f"/B:{stats['completed_boxes']}"
                 )
-                min_ponder_steps, mean_ponder_steps, max_ponder_steps = ponder_steps
+                min_ponder, mean_ponder, max_ponder = ponder_steps
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
@@ -1323,7 +1323,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                     f"Ponder Penalty: {current_ponder_penalty:.4f}, "
-                    f"Ponder: ({min_ponder_steps:.2f},{mean_ponder_steps:.2f},{max_ponder_steps:.2f}) "
+                    f"Ponder: ({min_ponder:.2f},{mean_ponder:.2f},{max_ponder:.2f}) "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
