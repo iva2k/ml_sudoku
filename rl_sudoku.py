@@ -67,11 +67,13 @@ EPS_START = 1.0
 EPS_END = 0.05  # A slightly higher floor can encourage exploration on harder puzzles
 EPS_DECAY = 0.9997  # Faster decay to encourage exploitation sooner
 TARGET_UPDATE = 10  # Frequency (in episodes) to update the target network
-MEMORY_CAPACITY = 10000
+MEMORY_CAPACITY = 100000 # Increased for better PER performance
 BATCH_SIZE = 128  # Larger batch size can stabilize training
 LR = 0.00025  # Slightly higher learning rate
 MAX_EPISODES = 50000
-PONDER_PENALTY = 0.01  # Penalty for each "thinking" step in ACT models
+PONDER_PENALTY = 0.1  # Increased penalty for each "thinking" step in ACT models
+PONDER_PENALTY_START = 0.01  # Slightly higher floor can encourage early exploration on harder puzzles
+PONDER_PENALTY_ANNEAL_EPISODES = 5000
 WEIGHT_DECAY = 0.01
 
 # Large Negative reward to suppress known illegal actions
@@ -1641,13 +1643,13 @@ def parse_args():
     parser.add_argument(
         "--ponder_penalty_start",
         type=float,
-        default=0.0,
+        default=PONDER_PENALTY_START,
         help="Starting ponder penalty for annealing.",
     )
     parser.add_argument(
         "--ponder_penalty_anneal_episodes",
         type=int,
-        default=5000,
+        default=PONDER_PENALTY_ANNEAL_EPISODES,
         help="Number of episodes to anneal the ponder penalty over.",
     )
 

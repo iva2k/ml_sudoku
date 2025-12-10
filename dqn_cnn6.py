@@ -61,9 +61,15 @@ class ACTReasoningBlock(nn.Module):
         # The "halting neuron" is a linear layer that maps the global average
         # of cell features to a single logit.
         self.halting_gate = nn.Sequential(
-            nn.Linear(d_model, 1),
+            # Input is d_model * 2 because we concatenate mean and std dev
+            nn.Linear(d_model * 2, d_model // 4),  # Hidden layer
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model // 4, 1),
             nn.Sigmoid(),
         )
+        # Initialize the bias of the final linear layer to encourage a starting probability
+        # around 0.62 (sigmoid(0.5)). This prevents the gate from starting in a saturated region.
+        nn.init.constant_(self.halting_gate[2].bias, 0.5)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -73,12 +79,16 @@ class ACTReasoningBlock(nn.Module):
             - halt_prob (torch.Tensor): A scalar tensor (B, 1) with the probability of
               halting at this step.
         """
-        next_state = self.reasoning(x)
+        # --- CRITICAL FIX: Provide richer statistics to the halting gate ---
+        # Instead of just the mean, we concatenate mean and standard deviation
+        # to give the gate a better signal to differentiate between states.
+        mean_features = x.mean(dim=[2, 3])
+        std_features = x.std(dim=[2, 3])
+        global_features = torch.cat([mean_features, std_features], dim=1)
 
-        # Global Average Pooling to get a single feature vector per puzzle
-        global_features = next_state.mean(dim=[2, 3])  # (B, D_Model)
         halt_prob = self.halting_gate(global_features)  # (B, 1)
 
+        next_state = self.reasoning(x)
         return next_state, halt_prob
 
 
@@ -107,7 +117,8 @@ class DQNSolverCNN6(nn.Module):
         # 2. Reducer: Project perception features into the reasoning dimension
         self.reduce = nn.Sequential(
             nn.Conv2d(48 * 3, d_model, kernel_size=1),
-            nn.BatchNorm2d(d_model),
+            # Use GroupNorm to prevent batch-wise homogenization
+            nn.GroupNorm(num_groups=32, num_channels=d_model),
             nn.ReLU(inplace=True),
         )
 
@@ -138,24 +149,15 @@ class DQNSolverCNN6(nn.Module):
         # A mask to track which samples are still running
         is_running_mask = torch.ones(b, device=self.device, dtype=torch.bool)
 
-        # This will be used to store the state *before* the reasoning block is applied
-        prev_x = x
-
         for _step_counter in range(self.max_steps):
             # Only update states for running samples
             x_running = x[is_running_mask]
             if x_running.numel() == 0:
                 break  # All samples have halted
 
-            # --- CRITICAL FIX for In-place Operation Error ---
-            # Create a new tensor for the next state to avoid in-place modification.
-            x_next = x.clone()
             # Apply the reasoning block only to the running samples.
+            # The halt probability is correctly based on the *current* state `x_running`.
             x_next_running, halt_prob_running = self.reasoning_block(x_running)
-            # Update the next state tensor only at the running indices.
-            x_next[is_running_mask] = x_next_running
-            # The state for the next iteration is this new tensor.
-            x = x_next
 
             # The probability for this step is capped by the remaining budget.
             # We only update probabilities for the running samples.
@@ -169,10 +171,15 @@ class DQNSolverCNN6(nn.Module):
 
             halt_accum += step_prob_full
             ponder_cost += is_running_mask.float()
+            # The state_sum is a weighted average of the *next* states.
             # The state sum must be weighted by the state *before* the reasoning step,
-            # not after. This links the halt probability to the state that produced it.
-            state_sum += prev_x * step_prob_full.view(-1, 1, 1, 1)
-            prev_x = x  # Update prev_x for the next iteration
+            # not after. This correctly links the halt probability to the state that produced it.
+            state_sum[is_running_mask] += x[is_running_mask] * step_prob.view(-1, 1, 1, 1)
+
+            # To avoid the in-place error, create a new tensor for the next iteration's state.
+            x_next = x.clone()
+            x_next[is_running_mask] = x_next_running
+            x = x_next
 
             # Update the mask for the next iteration
             is_running_mask = halt_accum.squeeze(-1) < self.halt_threshold
@@ -181,7 +188,7 @@ class DQNSolverCNN6(nn.Module):
         # The remainder is the "leftover" probability budget.
         remainder = 1.0 - halt_accum
         # The final state sum includes the state weighted by the remainder.
-        state_sum += prev_x * remainder.view(b, 1, 1, 1)
+        state_sum += x * remainder.view(b, 1, 1, 1)
 
         # The total ponder cost is the number of steps taken (N) plus the remainder (R_N).
         ponder_cost += remainder.squeeze(-1)

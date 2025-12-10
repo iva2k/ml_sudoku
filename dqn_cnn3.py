@@ -69,10 +69,10 @@ class ReasoningBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=1)
-        self.bn1 = nn.BatchNorm2d(channels)
+        self.bn1 = nn.GroupNorm(num_groups=32, num_channels=channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=1)
-        self.bn2 = nn.BatchNorm2d(channels)
+        self.bn2 = nn.GroupNorm(num_groups=32, num_channels=channels)
 
     def forward(self, x):
         """Forward pass."""
@@ -101,7 +101,7 @@ class DQNSolverCNN3(nn.Module):
         # We first reduce dimensions to make reasoning efficient
         self.reduce = nn.Sequential(
             nn.Conv2d(192, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(num_groups=32, num_channels=128),
             nn.ReLU(inplace=True),
         )
 

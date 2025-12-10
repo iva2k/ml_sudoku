@@ -111,7 +111,9 @@ class DQNSolverCNN4(nn.Module):
         # 2. Reducer: Project the concatenated perception features into the reasoning dimension
         self.reduce = nn.Sequential(
             nn.Conv2d(48 * 3, d_model, kernel_size=1),
-            nn.BatchNorm2d(d_model),
+            # Use GroupNorm to prevent batch-wise homogenization.
+            # num_groups=32 is a common choice. d_model=128 is divisible by 32.
+            nn.GroupNorm(num_groups=32, num_channels=d_model),
             nn.ReLU(inplace=True),
         )
 

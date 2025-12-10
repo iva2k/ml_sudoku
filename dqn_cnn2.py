@@ -28,8 +28,11 @@ class SudokuConstraintConv(nn.Module):
         self.col_conv = nn.Conv2d(in_channels, out_channels, kernel_size=(9, 1))
         # 3x3 stride 3 convolution finds box patterns (non-overlapping tiling)
         self.box_conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=3)
-
-        self.bn = nn.BatchNorm2d(out_channels * 3)
+        # Use GroupNorm to prevent batch-wise homogenization.
+        # num_channels will be out_channels * 3. This must be divisible by num_groups.
+        # If out_channels=64, num_channels=192. 192 is divisible by 32.
+        # If out_channels=48, num_channels=144. 144 is not divisible by 32, so we use 16.
+        self.bn = nn.GroupNorm(num_groups=16 if (out_channels * 3) % 32 != 0 else 32, num_channels=out_channels * 3)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -38,13 +41,13 @@ class SudokuConstraintConv(nn.Module):
 
         # 1. Row Features: (B, Out, 9, 1)
         r = self.row_conv(x)
-        # Expand back to (B, Out, 9, 9) by repeating across columns
-        r = r.expand(-1, -1, -1, 9)
+        # Repeat features across columns to fill the 9x9 grid
+        r = r.repeat_interleave(9, dim=3)
 
         # 2. Col Features: (B, Out, 1, 9)
         c = self.col_conv(x)
-        # Expand back to (B, Out, 9, 9) by repeating across rows
-        c = c.expand(-1, -1, 9, -1)
+        # Repeat features across rows to fill the 9x9 grid
+        c = c.repeat_interleave(9, dim=2)
 
         # 3. Box Features: (B, Out, 3, 3)
         b = self.box_conv(x)
@@ -75,7 +78,7 @@ class DQNSolverCNN2(nn.Module):
         # Input channels = 64 * 3 = 192
         self.mix_conv = nn.Sequential(
             nn.Conv2d(192, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(num_groups=32, num_channels=128),
             nn.ReLU(inplace=True),
         )
 
