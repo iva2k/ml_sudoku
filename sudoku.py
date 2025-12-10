@@ -237,10 +237,10 @@ def _count_solutions(board: Board, count_limit: int = 2) -> int:
                 options = all_digits - used_digits
                 if len(options) < min_options:
                     min_options = len(options)
-                    best_cell = (r, c)
-                    best_options = list(options)
                     if min_options == 0:  # No solution possible down this path
                         return False
+                    best_cell = (r, c)
+                    best_options = list(options)
 
         if best_cell is None:  # No empty cells left, a solution is found
             count += 1
