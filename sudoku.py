@@ -485,7 +485,7 @@ def get_unique_sudoku(solution: Board, num_clues: int, debug: bool = False) -> B
     """
     coords_to_try = list(np.ndindex(9, 9))
     random.shuffle(coords_to_try)
-    if num_clues == 81 - 54:
+    if debug and num_clues == 81 - 54:
         print(
             f'num_clues={num_clues}, sol="{arr_to_str(solution)}" coords={coords_to_try}'
         )
@@ -498,11 +498,12 @@ def _get_unique_sudoku(
     """
     Generates a Sudoku puzzle with a unique solution by starting with a solved
     grid and recursively removing chunks of cells. This is much more efficient
-    debug and than removing cells one-by-one.
+    than removing cells one-by-one.
     The resulting puzzle will have exactly `num_clues` if successful.
-    If not enough blank cells that keep unique solution, the resulting puzzle will
-    have more clues than `num_clues`. Rerunning this function or starting from a
-    different solution may be able to find a better set of blank cells.
+    If not enough blank cells can be created while keeping the solution unique,
+    the resulting puzzle will have more clues than `num_clues`. Starting from
+    a different solution or coords_to_try may be able to find a better set of
+    blank cells.
     """
     puzzle = solution.copy()
 
@@ -517,11 +518,12 @@ def _get_unique_sudoku(
         clues_on_board = 81 - current_blanks
         blanks_to_create = clues_on_board - num_clues
         if blanks_to_create <= 0:
-            _ = debug and print(
-                f"DEBUG: Generated a puzzle with {clues_on_board} clues / {current_blanks} blanks: "
-                f"{count_sol_count} calls to count_solutions(), "
-                f"{len(keys_at)} keys at {keys_at}."
-            )
+            if debug:
+                print(
+                    f"DEBUG: Generated a puzzle with {clues_on_board} clues / {current_blanks} blanks: "
+                    f"{count_sol_count} calls to count_solutions(), "
+                    f"{len(keys_at)} keys at {keys_at}."
+                )
             return puzzle
 
         # 1. Determine chunk size with adaptive stride.
@@ -618,12 +620,13 @@ def _get_unique_sudoku(
 
     current_blanks = count_blanks(puzzle)
     clues_on_board = 81 - current_blanks
-    _ = debug and print(
-        f"DEBUG: Failed reaching target {num_clues} clues,"
-        f" Generated a puzzle with {clues_on_board} clues / {current_blanks} blanks: "
-        f"{count_sol_count} calls to count_solutions(), "
-        f"{len(keys_at)} keys at {keys_at}."
-    )
+    if debug:
+        print(
+            f"DEBUG: Failed reaching target {num_clues} clues,"
+            f" Generated a puzzle with {clues_on_board} clues / {current_blanks} blanks: "
+            f"{count_sol_count} calls to count_solutions(), "
+            f"{len(keys_at)} keys at {keys_at}."
+        )
     return puzzle
 
 
