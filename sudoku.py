@@ -520,7 +520,8 @@ def _get_unique_sudoku(
         if blanks_to_create <= 0:
             if debug:
                 print(
-                    f"DEBUG: Generated a puzzle with {clues_on_board} clues / {current_blanks} blanks: "
+                    "DEBUG: Generated a puzzle with "
+                    f"{clues_on_board} clues / {current_blanks} blanks: "
                     f"{count_sol_count} calls to count_solutions(), "
                     f"{len(keys_at)} keys at {keys_at}."
                 )

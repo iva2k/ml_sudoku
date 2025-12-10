@@ -835,7 +835,9 @@ def get_action(
                 mask_t = generate_legal_mask_gpu(state_t)
                 # .squeeze() can create a 0-dim tensor if there's only one legal move.
                 # np.atleast_1d() ensures it's always an array.
-                legal_actions = np.atleast_1d(torch.nonzero(mask_t, as_tuple=False).squeeze().cpu().numpy())
+                legal_actions = np.atleast_1d(
+                    torch.nonzero(mask_t, as_tuple=False).squeeze().cpu().numpy()
+                )
             else:
                 mask = generate_legal_mask(state)
                 legal_actions = np.atleast_1d(np.nonzero(mask)[0])
@@ -888,16 +890,19 @@ def optimize_model(
     """
     Performs one step of optimization on the Policy Network.
     Handles both standard and prioritized replay.
+    Returns (min, mean, max)) ponder steps.
     """
     is_per = isinstance(memory, PrioritizedReplayBuffer)
     if is_per:
         transitions, indices, is_weights = batch_data
-        is_weights_t = torch.tensor(is_weights, dtype=torch.float32, device=policy_net.device)
+        is_weights_t = torch.tensor(
+            is_weights, dtype=torch.float32, device=policy_net.device
+        )
     else:
         transitions = batch_data
 
     if not transitions:
-        return
+        return (0.0, 0.0, 0.0)
 
     # Determine the actual batch size from the transitions list
     batch_size = len(transitions)
@@ -973,7 +978,9 @@ def optimize_model(
     # (i.e., when indices are available). The HER pass will have indices=None.
     if is_per:
         with torch.no_grad():
-            td_error = torch.abs(state_action_values - expected_state_action_values.unsqueeze(1))
+            td_error = torch.abs(
+                state_action_values - expected_state_action_values.unsqueeze(1)
+            )
             if indices is not None:
                 memory.update_priorities(indices, td_error.cpu().numpy().flatten())
 
@@ -992,6 +999,12 @@ def optimize_model(
     # torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
     optimizer.step()
+
+    return (
+            ponder_cost.min().item(),
+            ponder_cost.mean().item(),
+            ponder_cost.max().item(),
+         ) if ponder_cost is not None else (0.0, 0.0, 0.0)
 
 
 def prevent_sleep():
@@ -1154,8 +1167,17 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 env.puzzle_generator.set_difficulty(min_c, max_c)
 
             # Ponder Cost Annealing: Calculate current penalty for this episode
-            progress = min(1.0, total_episodes_trained / args.ponder_penalty_anneal_episodes if args.ponder_penalty_anneal_episodes > 0 else 1.0)
-            current_ponder_penalty = args.ponder_penalty_start + progress * (args.ponder_penalty - args.ponder_penalty_start)
+            progress = min(
+                1.0,
+                (
+                    total_episodes_trained / args.ponder_penalty_anneal_episodes
+                    if args.ponder_penalty_anneal_episodes > 0
+                    else 1.0
+                ),
+            )
+            current_ponder_penalty = args.ponder_penalty_start + progress * (
+                args.ponder_penalty - args.ponder_penalty_start
+            )
 
             # 2. Reset the environment and get initial state
             state, num_clues, _info = env.reset()
@@ -1164,6 +1186,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             episode_reward = 0
             episode_solved = False
             episode_transitions = []  # Store transitions for this episode
+            ponder_steps = (0.0, 0.0, 0.0)
 
             # 3. Run the episode
             for _step in range(81):  # Max 81 steps (cells) per episode
@@ -1205,7 +1228,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # 7. Perform optimization step
                 if len(memory) >= args.batch_size:
                     batch_data = memory.sample(args.batch_size)
-                    optimize_model(
+                    ponder_steps = optimize_model(
                         policy_net,
                         target_net,
                         optimizer,
@@ -1244,13 +1267,18 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # we can use an importance sampling weight of 1.0 for all transitions.
                 # The indices are not used for priority updates in this case, so they can be None.
                 if isinstance(memory, PrioritizedReplayBuffer):
-                    batch_data = (episode_transitions, None, np.ones(len(episode_transitions)))
+                    batch_data = (
+                        episode_transitions,
+                        None,
+                        np.ones(len(episode_transitions)),
+                    )
                 else:
                     batch_data = episode_transitions
 
                 # For successful episodes, this reinforces the good moves.
                 # For failed episodes, this reinforces the penalties for bad moves.
-                optimize_model(
+                # Log the ponder steps from the more representative HER pass
+                ponder_steps = optimize_model(
                     policy_net,
                     target_net,
                     optimizer,
@@ -1286,7 +1314,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"/C:{stats['completed_cols']}"
                     f"/B:{stats['completed_boxes']}"
                 )
-
+                min_ponder_steps, mean_ponder_steps, max_ponder_steps = ponder_steps
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
@@ -1294,7 +1322,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Steps: {episode_steps:3d}, "
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
-                    f"Ponder: {current_ponder_penalty:.4f}, "
+                    f"Ponder Penalty: {current_ponder_penalty:.4f}, "
+                    f"Ponder: ({min_ponder_steps:.2f},{mean_ponder_steps:.2f},{max_ponder_steps:.2f})"
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "

@@ -139,7 +139,9 @@ class DQNSolverCNN6(nn.Module):
             step_prob = torch.min(halt_prob, remainder)
 
             halt_accum += step_prob
-            ponder_cost += 1.0
+            # Only increment ponder cost for samples that are still running.
+            is_running_mask = (halt_accum < 1.0).float().squeeze(-1)
+            ponder_cost += is_running_mask
             state_sum += x * step_prob.view(b, 1, 1, 1)  # Weight state by its prob
             step_counter += 1
 
