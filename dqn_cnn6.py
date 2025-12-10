@@ -169,9 +169,11 @@ class DQNSolverCNN6(nn.Module):
         remainder = 1.0 - halt_accum
         # The final state sum includes the state weighted by the remainder.
         state_sum += prev_x * remainder.view(b, 1, 1, 1)
-        # The total ponder cost is the number of steps taken (ponder_cost) plus the remainder.
-        # This makes the cost directly and differentiably dependent on the halt probabilities.
-        ponder_cost += remainder.squeeze(-1)
+
+        # The total ponder cost is the number of steps taken plus the remainder.
+        # Crucially, we use .detach() on the running mask when calculating the cost.
+        # This ensures the gradient from the ponder penalty only trains the halting gate.
+        ponder_cost += remainder.squeeze(-1).detach()
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)
