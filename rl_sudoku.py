@@ -1106,7 +1106,7 @@ def check_curriculum_progress(current_level: int, recent_solves: deque) -> int:
         if solve_rate >= threshold:
             print(
                 f"\n*** Curriculum Level Up! "
-                f"Passed '{level_info['name']}' "
+                f"Passed level {current_level} '{level_info['name']}' "
                 f"with solve rate {solve_rate:.2f} >= {threshold:.2f} ***"
             )
             return current_level + 1
@@ -1140,7 +1140,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         f"Starting Training "
         f"at episode {args.start_episode} "
         f"for {args.episodes} episodes, "
-        f"Curriculum Level: {CURRICULUM_LEVELS[curriculum_level]['name']}"
+        f"Curriculum Level: {curriculum_level} '{CURRICULUM_LEVELS[curriculum_level]['name']}'"
     )
     start_time = time.time()
 
@@ -1756,7 +1756,7 @@ def main() -> int:
             args.current_epsilon = checkpoint.get("current_epsilon", args.eps_start)
             print(f"Will resume training from episode {args.start_episode}.")
             print(
-                f"Starting curriculum level: {CURRICULUM_LEVELS[args.curriculum_level]['name']}."
+                f"Starting curriculum level: {args.curriculum_level} '{CURRICULUM_LEVELS[args.curriculum_level]['name']}'."
             )
         except FileNotFoundError:
             print(
