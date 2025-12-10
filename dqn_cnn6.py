@@ -122,33 +122,36 @@ class DQNSolverCNN6(nn.Module):
         b, _c, _h, _w = x.shape
         x = self.reduce(self.constraint_conv(x))
 
-        # --- ACT Loop ---
+        # --- ACT Loop (Sample-Independent) ---
         halt_accum = torch.zeros((b, 1), device=self.device)
-        step_counter = 0
         ponder_cost = torch.zeros(b, device=self.device)
         state_sum = torch.zeros_like(x)
+        # A mask to track which samples are still running
+        is_running_mask = torch.ones(b, device=self.device, dtype=torch.bool)
 
-        while (halt_accum.max() < self.halt_threshold) and (
-            step_counter < self.max_steps
-        ):
+        for step_counter in range(self.max_steps):
+            # Only update states for running samples
+            x_running = x[is_running_mask]
+            if x_running.numel() == 0:
+                break  # All samples have halted
+
             x, halt_prob = self.reasoning_block(x)
 
-            # Calculate how much of the "halting budget" is left
-            remainder = 1.0 - halt_accum
-            # The probability for this step is capped by the remainder
-            step_prob = torch.min(halt_prob, remainder)
+            # The probability for this step is capped by the remaining budget
+            step_prob = torch.min(halt_prob, 1.0 - halt_accum)
 
             halt_accum += step_prob
-            # Only increment ponder cost for samples that are still running.
-            is_running_mask = (halt_accum < 1.0).float().squeeze(-1)
-            ponder_cost += is_running_mask
+            ponder_cost += is_running_mask.float()
             state_sum += x * step_prob.view(b, 1, 1, 1)  # Weight state by its prob
-            step_counter += 1
+
+            # Update the mask for the next iteration
+            is_running_mask = halt_accum.squeeze(-1) < self.halt_threshold
 
         # Handle any remaining probability budget if max_steps was reached
+        # This ensures the probabilities for each sample sum to 1.
         remainder = 1.0 - halt_accum
         state_sum += x * remainder.view(b, 1, 1, 1)
-        ponder_cost += remainder.squeeze(-1)
+        ponder_cost += is_running_mask.float()  # Add final step cost for those still running
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)

@@ -1323,7 +1323,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                     f"Ponder Penalty: {current_ponder_penalty:.4f}, "
-                    f"Ponder: ({min_ponder_steps:.2f},{mean_ponder_steps:.2f},{max_ponder_steps:.2f})"
+                    f"Ponder: ({min_ponder_steps:.2f},{mean_ponder_steps:.2f},{max_ponder_steps:.2f}) "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
