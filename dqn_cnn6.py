@@ -117,6 +117,15 @@ class DQNSolverCNN6(nn.Module):
         # 4. Output Head: Project each cell's final embedding to 9 digit scores.
         self.fc = nn.Linear(d_model, 9)
 
+    def set_reasoning_grad(self, requires_grad: bool):
+        """Enable or disable gradients for the main reasoning components."""
+        for param in self.constraint_conv.parameters():
+            param.requires_grad = requires_grad
+        for param in self.reduce.parameters():
+            param.requires_grad = requires_grad
+        for param in self.reasoning_block.reasoning.parameters():
+            param.requires_grad = requires_grad
+
     def forward(self, x):
         """Forward pass."""
         b, _c, _h, _w = x.shape
@@ -152,13 +161,17 @@ class DQNSolverCNN6(nn.Module):
             # We only update probabilities for the running samples.
             step_prob = torch.min(halt_prob_running, 1.0 - halt_accum[is_running_mask])
 
-            halt_accum[is_running_mask] += step_prob
+            # --- CRITICAL FIX: Map running probabilities back to the full batch ---
+            # Create a zero tensor for the whole batch and fill in the probabilities
+            # for the running samples at their correct indices.
+            step_prob_full = torch.zeros_like(halt_accum)
+            step_prob_full[is_running_mask] = step_prob
+
+            halt_accum += step_prob_full
             ponder_cost += is_running_mask.float()
             # The state sum must be weighted by the state *before* the reasoning step,
             # not after. This links the halt probability to the state that produced it.
-            state_sum[is_running_mask] += prev_x[is_running_mask] * step_prob.view(
-                -1, 1, 1, 1
-            )
+            state_sum += prev_x * step_prob_full.view(-1, 1, 1, 1)
             prev_x = x  # Update prev_x for the next iteration
 
             # Update the mask for the next iteration
@@ -170,10 +183,8 @@ class DQNSolverCNN6(nn.Module):
         # The final state sum includes the state weighted by the remainder.
         state_sum += prev_x * remainder.view(b, 1, 1, 1)
 
-        # The total ponder cost is the number of steps taken plus the remainder.
-        # Crucially, we use .detach() on the running mask when calculating the cost.
-        # This ensures the gradient from the ponder penalty only trains the halting gate.
-        ponder_cost += remainder.squeeze(-1).detach()
+        # The total ponder cost is the number of steps taken (N) plus the remainder (R_N).
+        ponder_cost += remainder.squeeze(-1)
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)

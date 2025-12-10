@@ -987,14 +987,26 @@ def optimize_model(
         # Apply importance sampling weights
         loss = (loss * is_weights_t).mean()
 
-    # Add the ponder cost for ACT models
-    if ponder_cost is not None:
-        # We want to minimize the number of steps, so we add it to the loss
-        loss += ponder_penalty * ponder_cost.mean()
-
-    # Optimize the model
+    # --- Two-Pass Optimization for ACT Models ---
     optimizer.zero_grad()
-    loss.backward()
+
+    if ponder_cost is not None:
+        # 1. Backpropagate the main RL loss to train the whole network to solve Sudoku.
+        loss.backward(retain_graph=True)
+
+        # 2. Freeze the reasoning parts of the network.
+        policy_net.set_reasoning_grad(False)
+
+        # 3. Backpropagate the ponder loss to *only* train the halting gate.
+        ponder_loss = ponder_penalty * ponder_cost.mean()
+        ponder_loss.backward()
+
+        # 4. Unfreeze the reasoning parts for the next iteration.
+        policy_net.set_reasoning_grad(True)
+    else:
+        # Standard single-pass optimization for non-ACT models
+        loss.backward()
+
     # Gradient clipping (optional but recommended for stability)
     # torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
     torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
