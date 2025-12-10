@@ -54,7 +54,7 @@ class ACTReasoningBlock(nn.Module):
     It outputs both the next state and a scalar halting probability.
     """
 
-    def __init__(self, d_model: int, n_heads: int):
+    def __init__(self, d_model: int, n_heads: int, halting_bias: int | None = -1.0):
         super().__init__()
         self.reasoning = GlobalReasoningBlock(d_model, n_heads)
 
@@ -68,8 +68,9 @@ class ACTReasoningBlock(nn.Module):
             nn.Sigmoid(),
         )
         # Initialize the bias of the final linear layer to encourage a starting probability
-        # around 0.62 (sigmoid(0.5)). This prevents the gate from starting in a saturated region.
-        nn.init.constant_(self.halting_gate[2].bias, 0.5)
+        # around 0.27 (sigmoid(-1.0)). This starts the model with ~4 steps, allowing bidirectional learning.
+        if halting_bias is not None:
+            nn.init.constant_(self.halting_gate[2].bias, halting_bias)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -104,6 +105,7 @@ class DQNSolverCNN6(nn.Module):
         device=None,
         max_steps: int = 16,
         halt_threshold: float = 0.99,
+        halting_bias: int | None = -1.0,
     ):
         super().__init__()
         self.device = device
@@ -123,7 +125,7 @@ class DQNSolverCNN6(nn.Module):
         )
 
         # 3. Recurrent Global Reasoning with ACT
-        self.reasoning_block = ACTReasoningBlock(d_model, n_heads=4)
+        self.reasoning_block = ACTReasoningBlock(d_model, n_heads=4, halting_bias=halting_bias)
 
         # 4. Output Head: Project each cell's final embedding to 9 digit scores.
         self.fc = nn.Linear(d_model, 9)
