@@ -132,15 +132,6 @@ class DQNSolverCNN6(nn.Module):
         # 4. Output Head: Project each cell's final embedding to 9 digit scores.
         self.fc = nn.Linear(d_model, 9)
 
-    def set_reasoning_grad(self, requires_grad: bool):
-        """Enable or disable gradients for the main reasoning components."""
-        for param in self.constraint_conv.parameters():
-            param.requires_grad = requires_grad
-        for param in self.reduce.parameters():
-            param.requires_grad = requires_grad
-        for param in self.reasoning_block.reasoning.parameters():
-            param.requires_grad = requires_grad
-
     def forward(self, x):
         """Forward pass."""
         b, _c, _h, _w = x.shape

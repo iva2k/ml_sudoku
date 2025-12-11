@@ -989,22 +989,16 @@ def optimize_model(
         # Apply importance sampling weights
         loss = (loss * is_weights_t).mean()
 
-    # --- Two-Pass Optimization for ACT Models ---
+    # --- Optimization ---
     optimizer.zero_grad()
 
     if ponder_cost is not None:
-        # 1. Backpropagate the main RL loss to train the whole network to solve Sudoku.
-        loss.backward(retain_graph=True)
-
-        # 2. Freeze the reasoning parts of the network.
-        policy_net.set_reasoning_grad(False)
-
-        # 3. Backpropagate the ponder loss to *only* train the halting gate.
+        # Combine losses for ACT models (Single-Pass)
+        # This allows the reasoning block to learn to produce features that trigger
+        # the halting gate at the appropriate time (Reason-then-Halt).
         ponder_loss = ponder_penalty * ponder_cost.mean()
-        ponder_loss.backward()
-
-        # 4. Unfreeze the reasoning parts for the next iteration.
-        policy_net.set_reasoning_grad(True)
+        total_loss = loss + ponder_loss
+        total_loss.backward()
     else:
         # Standard single-pass optimization for non-ACT models
         loss.backward()
