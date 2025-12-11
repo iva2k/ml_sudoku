@@ -1064,30 +1064,35 @@ CURRICULUM_LEVELS = [
         "clues": (78, 80),
         "solve_rate_threshold": 0.9,
         "eval_window": 50,
+        "apply_ponder_penalty": False,
     },
     {
         "name": "Easy",
         "clues": (50, 78),
         "solve_rate_threshold": 0.7,
         "eval_window": 100,
+        "apply_ponder_penalty": False,
     },
     {
         "name": "Medium",
         "clues": (40, 55),
         "solve_rate_threshold": 0.5,
         "eval_window": 200,
+        "apply_ponder_penalty": False,
     },
     {
         "name": "Hard",
         "clues": (25, 45),
         "solve_rate_threshold": None,
         "eval_window": None,
+        "apply_ponder_penalty": True,
     },
     {
         "name": "Expert",
         "clues": (19, 27),
         "solve_rate_threshold": None,
         "eval_window": None,
+        "apply_ponder_penalty": True,
     },  # Final level
 ]
 
@@ -1175,17 +1180,20 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 env.puzzle_generator.set_difficulty(min_c, max_c)
 
             # Ponder Cost Annealing: Calculate current penalty for this episode
-            progress = min(
-                1.0,
-                (
-                    total_episodes_trained / args.ponder_penalty_anneal_episodes
-                    if args.ponder_penalty_anneal_episodes > 0
-                    else 1.0
-                ),
-            )
-            current_ponder_penalty = args.ponder_penalty_start + progress * (
-                args.ponder_penalty - args.ponder_penalty_start
-            )
+            if not CURRICULUM_LEVELS[curriculum_level].get("apply_ponder_penalty", True):
+                current_ponder_penalty = 0.0
+            else:
+                progress = min(
+                    1.0,
+                    (
+                        total_episodes_trained / args.ponder_penalty_anneal_episodes
+                        if args.ponder_penalty_anneal_episodes > 0
+                        else 1.0
+                    ),
+                )
+                current_ponder_penalty = args.ponder_penalty_start + progress * (
+                    args.ponder_penalty - args.ponder_penalty_start
+                )
 
             # 2. Reset the environment and get initial state
             state, num_clues, _info = env.reset()
