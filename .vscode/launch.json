@@ -29,7 +29,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 200 --fixed_puzzle --reward_shaping",
+            "name": "Python: RL sudoku CNN6 200 --fixed_puzzle --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -43,7 +43,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 200 --reward_shaping",
+            "name": "Python: RL sudoku CNN6 200 --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -58,7 +58,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 200 --masking",
+            "name": "Python: RL sudoku CNN6 200 --masking",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -73,7 +73,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 0 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 0 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -92,7 +92,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 100 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 100 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -110,7 +110,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 400 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 400 --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -128,7 +128,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 1000 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 1k --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -146,7 +146,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 4000 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 4k --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -164,7 +164,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 16000 --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 16k --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
@@ -182,7 +182,7 @@
             "justMyCode": true
         },
         {
-            "name": "Python: RL sudoku 50k --masking --reward_shaping",
+            "name": "Python: RL sudoku CNN6 50k --masking --reward_shaping",
             "type": "debugpy",
             "request": "launch",
             "program": "rl_sudoku.py",
