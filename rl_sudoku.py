@@ -72,7 +72,7 @@ BATCH_SIZE = 128  # Larger batch size can stabilize training
 LR = 0.00025  # Slightly higher learning rate
 MAX_EPISODES = 50000
 PONDER_PENALTY = 0.1  # Increased penalty for each "thinking" step in ACT models
-PONDER_PENALTY_START = 0.01  # Slightly higher floor can encourage early exploration on harder puzzles
+PONDER_PENALTY_START = 0.0  # Start at 0 to allow "deep thinking" learning before optimizing for speed
 PONDER_PENALTY_ANNEAL_EPISODES = 5000
 WEIGHT_DECAY = 0.01
 

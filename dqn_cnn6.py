@@ -61,8 +61,8 @@ class ACTReasoningBlock(nn.Module):
         # The "halting neuron" is a linear layer that maps the global average
         # of cell features to a single logit.
         self.halting_gate = nn.Sequential(
-            # Input is d_model * 2 because we concatenate mean and std dev
-            nn.Linear(d_model * 2, d_model // 4),  # Hidden layer
+            # Input is d_model * 3 because we concatenate mean, std dev, and max
+            nn.Linear(d_model * 3, d_model // 4),  # Hidden layer
             nn.ReLU(inplace=True),
             nn.Linear(d_model // 4, 1),
             nn.Sigmoid(),
@@ -81,16 +81,17 @@ class ACTReasoningBlock(nn.Module):
             - halt_prob (torch.Tensor): A scalar tensor (B, 1) with the probability of
               halting at this step.
         """
-        # --- CRITICAL FIX: Provide richer statistics to the halting gate ---
-        # Instead of just the mean, we concatenate mean and standard deviation
-        # to give the gate a better signal to differentiate between states.
-        mean_features = x.mean(dim=[2, 3])
-        std_features = x.std(dim=[2, 3])
-        global_features = torch.cat([mean_features, std_features], dim=1)
+        # 1. Perform Reasoning First
+        next_state = self.reasoning(x)
+
+        # 2. Decide to halt based on the CONCLUSION (next_state), not the premise (x).
+        # We use the statistics of the *result* to see if we found a solution/high confidence.
+        mean_features = next_state.mean(dim=[2, 3])
+        std_features = next_state.std(dim=[2, 3])
+        max_features = next_state.amax(dim=[2, 3])
+        global_features = torch.cat([mean_features, std_features, max_features], dim=1)
 
         halt_prob = self.halting_gate(global_features)  # (B, 1)
-
-        next_state = self.reasoning(x)
         return next_state, halt_prob
 
 
@@ -175,9 +176,9 @@ class DQNSolverCNN6(nn.Module):
             halt_accum += step_prob_full
             ponder_cost += is_running_mask.float()
             # The state_sum is a weighted average of the *next* states.
-            # The state sum must be weighted by the state *before* the reasoning step,
-            # not after. This correctly links the halt probability to the state that produced it.
-            state_sum[is_running_mask] += x[is_running_mask] * step_prob.view(-1, 1, 1, 1)
+            # We accumulate the RESULT of the reasoning (x_next_running), weighted by the
+            # probability that we stop here.
+            state_sum[is_running_mask] += x_next_running * step_prob.view(-1, 1, 1, 1)
 
             # To avoid the in-place error, create a new tensor for the next iteration's state.
             x_next = x.clone()
