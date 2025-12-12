@@ -333,5 +333,5 @@ by the training methodology implemented in `rl_sudoku.py`.
   redundant (it was implemented earlier but then removed). Since new transitions
   are pushed to the replay memory buffer with **maximum priority**, they are
   statistically guaranteed to be sampled in the very next optimization step.
-  This provides the immediate feedback loop required for efficient learning 
+  This provides the immediate feedback loop required for efficient learning
   without the overhead of a separate less efficient training pass.

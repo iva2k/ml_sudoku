@@ -820,13 +820,14 @@ def get_action(
 ):
     """
     Implements the epsilon-greedy policy.
-    Returns the chosen action (or None if no actions are legal) and the new epsilon value.
+    Returns the chosen action (or None), new epsilon, and ponder cost (if any).
     """
     # Use max to ensure we don't go below EPS_END
     current_epsilon = max(eps_end, epsilon)
 
     # Epsilon decay
     new_epsilon = max(eps_end, epsilon * eps_decay)
+    ponder_cost = 0.0
 
     if random.random() < current_epsilon:
         # Explore: Choose a random action
@@ -845,7 +846,7 @@ def get_action(
                 legal_actions = np.atleast_1d(np.nonzero(mask)[0])
             if len(legal_actions) == 0:
                 # No legal moves are possible (board is full). Signal to terminate.
-                return None, new_epsilon
+                return None, new_epsilon, 0.0
             action = random.choice(legal_actions)
         else:
             action = action_space.sample()
@@ -860,6 +861,7 @@ def get_action(
             output = policy_net(one_hot_state.unsqueeze(0))
             if isinstance(output, tuple):
                 q_values = output[0]
+                ponder_cost = output[1].item()
             else:
                 q_values = output
 
@@ -876,7 +878,7 @@ def get_action(
                 # Use argmax to get the best action index
                 action = q_values.argmax(dim=1).item()
 
-    return action, new_epsilon
+    return action, new_epsilon, ponder_cost
 
 
 def optimize_model(
@@ -1202,12 +1204,13 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             episode_steps = 0
             episode_reward = 0
             episode_solved = False
-            ponder_steps = (0.0, 0.0, 0.0)
+            # batch_ponder = (0.0, 0.0, 0.0)
+            batch_ponder_stats = []
             episode_ponder_stats = []
 
             # 3. Run the episode
             for _step in range(81):  # Max 81 steps (cells) per episode
-                action, current_epsilon = get_action(
+                action, current_epsilon, action_ponder = get_action(
                     state,
                     policy_net,
                     env.action_space,
@@ -1216,6 +1219,9 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     args.eps_decay,
                     args.masking,
                 )
+
+                if action_ponder > 0:
+                    episode_ponder_stats.append(action_ponder)
 
                 if action is None:
                     # No legal moves were available, terminate the episode
@@ -1243,7 +1249,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 # 7. Perform optimization step
                 if len(memory) >= args.batch_size:
                     batch_data = memory.sample(args.batch_size)
-                    ponder_steps = optimize_model(
+                    batch_ponder = optimize_model(
                         policy_net,
                         target_net,
                         optimizer,
@@ -1253,8 +1259,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                         current_ponder_penalty,
                         args.masking,
                     )
-                    if ponder_steps != (0.0, 0.0, 0.0):
-                        episode_ponder_stats.append(ponder_steps)
+                    if batch_ponder != (0.0, 0.0, 0.0):
+                        batch_ponder_stats.append(batch_ponder)
                 epoch_steps_done += 1
                 episode_steps += 1
 
@@ -1293,12 +1299,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
 
                 # Calculate aggregate ponder stats for the whole episode
                 if episode_ponder_stats:
-                    mins, means, maxs = zip(*episode_ponder_stats)
-                    p_min = min(mins)  # Lowest ponder seen in any batch
-                    p_mean = sum(means) / len(means)  # Average ponder across all batches
-                    p_max = max(maxs)  # Highest ponder seen in any batch
+                    e_p_min = min(episode_ponder_stats)
+                    e_p_mean = sum(episode_ponder_stats) / len(episode_ponder_stats)
+                    e_p_max = max(episode_ponder_stats)
                 else:
-                    p_min, p_mean, p_max = 0.0, 0.0, 0.0
+                    e_p_min, e_p_mean, e_p_max = 0.0, 0.0, 0.0
 
                 stats = env.episode_stats
                 solved_ratio = (
@@ -1309,7 +1314,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"/C:{stats['completed_cols']}"
                     f"/B:{stats['completed_boxes']}"
                 )
-                # p_min, p_mean, p_max = ponder_steps
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
@@ -1318,7 +1322,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                     f"Ponder Penalty: {current_ponder_penalty:.4f}, "
-                    f"Ponder: ({p_min:.2f},{p_mean:.2f},{p_max:.2f}) "
+                    # f"Batch Ponder: ({b_p_min:.2f},{b_p_mean:.2f},{b_p_max:.2f}) "
+                    f"Ponder: ({e_p_min:.2f},{e_p_mean:.2f},{e_p_max:.2f}) "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
