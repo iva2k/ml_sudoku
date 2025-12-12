@@ -1202,7 +1202,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             episode_steps = 0
             episode_reward = 0
             episode_solved = False
-            episode_transitions = []  # Store transitions for this episode
             ponder_steps = (0.0, 0.0, 0.0)
             episode_ponder_stats = []
 
@@ -1236,8 +1235,6 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     state_t, action, reward, next_state_t, done, i_episode
                 )
                 memory.push(*transition)
-                # Also store for potential end-of-episode training
-                episode_transitions.append(transition)
 
                 # 6. Move to the next state
                 state = next_state
@@ -1278,42 +1275,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             blank_cells = env.episode_stats.get("blank_cells_start", 81 - num_clues)
             histogram.update(blank_cells, episode_solved)
 
-            # 8. Hindsight Experience Replay (HER): After an episode finishes (win or lose),
-            # perform an extra training pass on its full trajectory. This provides immediate
-            # feedback on the outcome.
-            if episode_transitions:
-                # For PER, we need to construct a valid batch_data tuple.
-                # Since this is an out-of-band training pass (not sampled from the buffer),
-                # we can use an importance sampling weight of 1.0 for all transitions.
-                # The indices are not used for priority updates in this case, so they can be None.
-                if isinstance(memory, PrioritizedReplayBuffer):
-                    batch_data = (
-                        episode_transitions,
-                        None,
-                        np.ones(len(episode_transitions)),
-                    )
-                else:
-                    batch_data = episode_transitions
-
-                # For successful episodes, this reinforces the good moves.
-                # For failed episodes, this reinforces the penalties for bad moves.
-                # Log the ponder steps from the more representative HER pass
-                _her_ponder_steps = optimize_model(
-                    policy_net,
-                    target_net,
-                    optimizer,
-                    memory,
-                    batch_data,
-                    args.gamma,
-                    current_ponder_penalty,
-                    args.masking,
-                )
-
-            # 9. Update the target network periodically
+            # 8. Update the target network periodically
             if i_episode % args.target_update == 0:
                 target_net.load_state_dict(policy_net.state_dict())
 
-            # 10. Logging and Reporting
+            # 9. Logging and Reporting
             best_reward_str = ""
             if best_reward == -float("inf") or episode_reward > best_reward:
                 # if best_reward != -float('inf'):
@@ -1358,7 +1324,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
                 )
 
-            # 11. Save the model periodically or at the end of training
+            # 10. Save the model periodically or at the end of training
             if args.save_model and (
                 best_reward_str or final_episode or i_episode % 100 == 0
             ):

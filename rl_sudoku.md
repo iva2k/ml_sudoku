@@ -329,15 +329,9 @@ by the training methodology implemented in `rl_sudoku.py`.
   sampling, PER uses Importance Sampling (IS) weights to scale the loss during
   backpropagation, ensuring the training remains stable.
 
-* **Hindsight Experience Replay (HER)**: Standard DQN training involves sampling
-  random, disconnected past experiences. HER enhances this by leveraging the
-  outcome of an entire episode for more focused training. After an episode
-  concludes (win or lose), its complete trajectory is used for an immediate,
-  extra training pass.
-  * For a **successful episode**, this reinforces the entire chain of moves that
-    led to the large final reward.
-  * For a **failed episode**, this reinforces the penalties for the incorrect
-    moves that led to a dead end.
-  This approach provides immediate, contextual feedback, helping the agent learn
-  much more quickly which sequences of actions are promising and which are not,
-  rather than waiting for those transitions to be randomly sampled over time.
+  Additionally, PER renders explicit **Hindsight Experience Replay (HER)**
+  redundant (it was implemented earlier but then removed). Since new transitions
+  are pushed to the replay memory buffer with **maximum priority**, they are
+  statistically guaranteed to be sampled in the very next optimization step.
+  This provides the immediate feedback loop required for efficient learning 
+  without the overhead of a separate less efficient training pass.
