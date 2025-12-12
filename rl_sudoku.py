@@ -1129,6 +1129,7 @@ def check_curriculum_progress(current_level: int, recent_solves: deque) -> int:
 def train(args, env, policy_net, target_net, optimizer, memory) -> int:
     """Main training loop."""
 
+    policy_net.train()
     # Add device to args
     if "device" not in args or not args.device:
         args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1480,6 +1481,7 @@ def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_so
 def test(args, env, policy_net) -> int:
     """Tests the trained agent on a set of puzzles."""
     print(f"\n--- Running Test Phase ({args.test_games} games) ---")
+    policy_net.eval()
     solved_count = 0
     total_steps = 0
     total_reward = 0

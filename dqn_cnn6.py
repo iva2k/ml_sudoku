@@ -154,6 +154,17 @@ class DQNSolverCNN6(nn.Module):
             # The halt probability is correctly based on the *current* state `x_running`.
             x_next_running, halt_prob_running = self.reasoning_block(x_running)
 
+            if self.training:
+                # Randomly scale down halting probability to encourage depth exploration.
+                # We clamp the probability to max 0.85 to GUARANTEE that at least 15% of the
+                # probability mass flows to the next step. This ensures that the gradient
+                # from step N+1 is always connected to the halting gate at step N,
+                # preventing the "missing gradient" problem where the model learns to halt
+                # prematurely and never sees the benefit of thinking longer.
+                scale = torch.rand_like(halt_prob_running) * 0.5 + 0.5
+                halt_prob_running = halt_prob_running * scale
+                halt_prob_running = torch.clamp(halt_prob_running, max=0.85)
+
             # The probability for this step is capped by the remaining budget.
             # We only update probabilities for the running samples.
             step_prob = torch.min(halt_prob_running, 1.0 - halt_accum[is_running_mask])

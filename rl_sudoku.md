@@ -215,7 +215,7 @@ This model introduces a truly dynamic reasoning process, allowing the model to l
 
 This architecture is the most sophisticated, as it allows the model's computational depth to adapt to the logical depth of the problem itself.
 
-* **Ponder Cost Annealing**: A fixed ponder penalty can be too restrictive early in training, as it punishes the model for "thinking" before it has even learned the basic rules. To solve this, we use **Ponder Cost Annealing**. The training starts with a very low (or zero) penalty, allowing the model to freely explore its computational depth to learn the task. The penalty is then gradually increased over a set number of episodes, which slowly encourages the model to become more computationally efficient *after* it has developed a foundational understanding of the game. This leads to more stable training and better final performance.
+* **Ponder Cost Annealing**: A fixed ponder penalty can be too restrictive early in training, as it punishes the model for "thinking" before it has even learned the basic rules. To solve this, we use **Ponder Cost Annealing**. The training starts with a very low (or zero) penalty, allowing the model to freely explore its computational depth to learn the task. The penalty is kept at 0 for early Curriculum Levels, then gradually increased over a set number of episodes, which slowly encourages the model to become more computationally efficient *after* it has developed a foundational understanding of the game. This leads to more stable training and better final performance.
 
 #### ACT Implementation Details & Preliminary Results
 
@@ -223,17 +223,29 @@ The `cnn6` model implements a sophisticated ACT mechanism that changes number of
 
 1. **Halting Gate**: A small MLP within the reasoning block that outputs a halting probability based on the current board state's statistics (mean and standard deviation of features).
 2. **Dynamic Loop**: The reasoning block is applied recurrently. For each sample in the batch, execution continues until the cumulative halting probability reaches a threshold (e.g., 0.99) or the maximum step count (16) is reached.
-3. **Two-Pass Optimization**: To prevent the strong Reinforcement Learning gradients (from rewards like +100) from drowning out the delicate Ponder Cost gradients, optimization is performed in two passes. First, the RL loss updates the whole network. Second, the reasoning weights are frozen, and the Ponder loss updates only the halting gate.
+3. Deprecated: **Two-Pass Optimization**: To prevent the strong Reinforcement Learning gradients (from rewards like +100) from drowning out the delicate Ponder Cost gradients, optimization is performed in two passes. First, the RL loss updates the whole network. Second, the reasoning weights are frozen, and the Ponder loss updates only the halting gate.
+
+Training the halting gate - The "Missing Gradient" Problem
+
+The signal comes from comparing the result of recurrent Step N vs. Step N+1. The final output of the model is essentially a weighted average of the states at each step:
+
+$$\text{Output} = p_1 \cdot \text{State}_1 + p_2 \cdot \text{State}_2 + \dots$$
+
+The gradient for the halting probability $p_1$ looks roughly like this:
+
+$$ \frac{\partial \text{Loss}}{\partial p_1} \propto (\text{State}_1 - \text{State}_2) \cdot \nabla \text{Loss} $$
+
+Here is the catch: If the model learns to halt at Step 1 with 100% probability ($p_1 \approx 1.0$), the loop terminates immediately. State 2 is never computed. Because State_2 is not in the computation graph, the term $(\text{State}_1 - \text{State}_2)$ cannot be calculated. The gradient becomes zero (or undefined) with respect to the benefit of waiting. The model becomes "blind" to the fact that Step 2 would have solved the puzzle. It thinks Step 1 is the only option, so it just tries to optimize Step 1's features, which might be impossible for a hard puzzle.
+
+The Solution: Forced Depth Exploration
+
+To fix this, we force the model to "occasionally" execute deeper steps during training, even if it thinks it wants to halt. By artificially scaling down the halting probability (only during training), we force the loop to continue. This brings State_2 back into the graph, allowing the gradient to "see" that State_2 yields a lower loss than State_1, which finally provides the signal to decrease $p_1$ permanently.
 
 **Preliminary Results (Early Training ~800 Episodes):**
 
 * **Superior Trainability**: `cnn6` demonstrates significantly better convergence properties than previous architectures (`cnn4`, `cnn5`), successfully advancing to Curriculum Level 2 (Easy/Medium) where others stagnated at Level 1.
 * **Ponder Exploration**: Around episode 400, the model begins to explore the trade-off between thinking time and accuracy. Ponder steps vary between 2 and 17, with occasional intermediate values.
 * **Reward Correlation**: Currently, solved puzzles are highly correlated with maximum pondering (17 steps). The model appears to be learning that "thinking longer" maximizes the probability of a correct solution.
-
-**Known Issue - The "Lockstep" Anomaly:**
-
-Despite the architecture being designed for per-sample adaptive computation (using `GroupNorm` instead of `BatchNorm`, and independent halting logic), training logs reveal that the `min`, `mean`, and `max` ponder steps within a batch are always identical. This indicates that all puzzles in a batch are halting at the exact same step. While the *number* of steps changes from batch to batch (adapting to the general difficulty or gradient updates), the *intra-batch* variance is zero. This suggests a subtle homogenization of features or gradients that forces the batch to act as a single unit, which remains an open area for investigation and fixing.
 
 ### Debugging Insights: Overcoming Training Stagnation
 
