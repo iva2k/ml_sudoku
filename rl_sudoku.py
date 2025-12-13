@@ -1395,16 +1395,22 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
     state = initial_state
     episode_steps = 0
     episode_reward = 0
+    episode_ponder_stats = []
 
     for _step in range(81):  # Max 81 steps
         with torch.no_grad():
             state_t = torch.from_numpy(state).to(args.device)
             one_hot_state = state_to_one_hot(state_t)
             output = policy_net(one_hot_state.unsqueeze(0))
+            ponder_cost = 0.0
             if isinstance(output, tuple):
                 q_values = output[0]
+                ponder_cost = output[1].item()
             else:
                 q_values = output
+
+            if ponder_cost > 0:
+                episode_ponder_stats.append(ponder_cost)
 
             if args.masking:
                 # Use the GPU-accelerated version for masking.
@@ -1438,10 +1444,18 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
         )
 
     is_solved = np.array_equal(env.current_grid, env.solution_grid)
-    return is_solved, episode_reward, episode_steps
+
+    if episode_ponder_stats:
+        p_min = min(episode_ponder_stats)
+        p_mean = sum(episode_ponder_stats) / len(episode_ponder_stats)
+        p_max = max(episode_ponder_stats)
+    else:
+        p_min, p_mean, p_max = 0.0, 0.0, 0.0
+
+    return is_solved, episode_reward, episode_steps, (p_min, p_mean, p_max)
 
 
-def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved):
+def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved, ponder_stats):
     """Helper function to log the results of a single test game."""
     stats = env.episode_stats
     solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
@@ -1450,9 +1464,11 @@ def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_so
         f"/C:{stats['completed_cols']}"
         f"/B:{stats['completed_boxes']}"
     )
+    p_min, p_mean, p_max = ponder_stats
     print(
         f"  Game  {i_game:6d} of {num_generated_games:6d}: "
         f"Steps: {steps:3d}, "
+        f"Ponder: ({p_min:.2f},{p_mean:.2f},{p_max:.2f}) "
         # f"Epoch Steps: {epoch_steps_done:6d}, "
         # f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
         f"Cells: {solved_ratio}, Groups: {groups_completed}, "
@@ -1482,7 +1498,7 @@ def test(args, env, policy_net) -> int:
         state, num_clues, _ = env.reset()
         env.fixed_puzzle = args.fixed_puzzle  # Revert to original setting
 
-        is_solved, final_reward, steps = run_test_episode(
+        is_solved, final_reward, steps, ponder_stats = run_test_episode(
             args, env, policy_net, state, show_boards=args.show_boards
         )
         if is_solved:
@@ -1490,7 +1506,7 @@ def test(args, env, policy_net) -> int:
         total_reward += final_reward
         total_steps += steps
 
-        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved)
+        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved, ponder_stats)
         histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
     # 2. Test on procedurally generated puzzles
@@ -1508,7 +1524,7 @@ def test(args, env, policy_net) -> int:
             )
             num_clues = 81 - difficulty
             state, num_clues, _ = env.reset(options={"num_clues": num_clues})
-            is_solved, final_reward, steps = run_test_episode(
+            is_solved, final_reward, steps, ponder_stats = run_test_episode(
                 args, env, policy_net, state, show_boards=args.show_boards
             )
             if is_solved:
@@ -1517,7 +1533,7 @@ def test(args, env, policy_net) -> int:
             total_steps += steps
 
             log_test_result(
-                env, i_game, num_generated_games, steps, final_reward, is_solved
+                env, i_game, num_generated_games, steps, final_reward, is_solved, ponder_stats
             )
             histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
