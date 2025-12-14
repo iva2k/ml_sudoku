@@ -54,7 +54,7 @@ class ACTReasoningBlock(nn.Module):
     It outputs both the next state and a scalar halting probability.
     """
 
-    def __init__(self, d_model: int, n_heads: int, halting_bias: int | None = -1.0):
+    def __init__(self, d_model: int, n_heads: int, halting_bias: float | None = -1.0):
         super().__init__()
         self.reasoning = GlobalReasoningBlock(d_model, n_heads)
 
@@ -107,7 +107,7 @@ class DQNSolverCNN6(nn.Module):
         device=None,
         max_steps: int = 16,
         halt_threshold: float = 0.99,
-        halting_bias: int | None = -1.0,
+        halting_bias: float | None = -4.0,
     ):
         super().__init__()
         self.device = device
@@ -155,15 +155,15 @@ class DQNSolverCNN6(nn.Module):
             x_next_running, halt_prob_running = self.reasoning_block(x_running)
 
             if self.training:
-                # Randomly scale down halting probability to encourage depth exploration.
-                # We clamp the probability to max 0.85 to GUARANTEE that at least 15% of the
-                # probability mass flows to the next step. This ensures that the gradient
-                # from step N+1 is always connected to the halting gate at step N,
-                # preventing the "missing gradient" problem where the model learns to halt
-                # prematurely and never sees the benefit of thinking longer.
-                scale = torch.rand_like(halt_prob_running) * 0.5 + 0.5
+                # REVISED TRAINING LOGIC:
+                # Aggressively scale down the halting probability to force the model to
+                # "think" for longer (use more steps), while maintaining gradient flow.
+                # We use a scale in range [0.01, 0.51]. This ensures that even if the
+                # gate outputs 1.0 (halt), we reduce it to <= 0.5, guaranteeing that
+                # we continue for at least a few more steps.
+                # This allows the reasoning block to learn deep logic first.
+                scale = torch.rand_like(halt_prob_running) * 0.5 + 0.01
                 halt_prob_running = halt_prob_running * scale
-                halt_prob_running = torch.clamp(halt_prob_running, max=0.85)
 
             # The probability for this step is capped by the remaining budget.
             # We only update probabilities for the running samples.
