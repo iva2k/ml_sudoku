@@ -45,7 +45,81 @@ import torch
 import torch.nn as nn
 
 from dqn_cnn2 import SudokuConstraintConv
-from dqn_cnn4 import GlobalReasoningBlock
+
+
+class EnhancedReasoningBlock(nn.Module):
+    """
+    A reasoning block that explicitly aggregates Row, Column, and Box contexts.
+    This replaces the generic GlobalReasoningBlock to ensure Sudoku-specific
+    constraints are propagated efficiently.
+    """
+
+    def __init__(self, d_model: int):
+        super().__init__()
+
+        # 1. Local/Spatial processing (3x3 Conv)
+        # Captures immediate neighborhood interactions
+        self.conv_local = nn.Sequential(
+            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1, bias=False),
+            nn.GroupNorm(num_groups=32, num_channels=d_model),
+            nn.ReLU(inplace=True),
+        )
+
+        # 2b. Global Attention
+        # Captures long-range pairwise dependencies (e.g., X-Wings, Naked Pairs)
+        self.attention = nn.MultiheadAttention(d_model, num_heads=4, batch_first=True)
+
+        # 2. Mixer for aggregating Contexts
+        # Inputs:
+        # - Original State (d_model)
+        # - Local Processed (d_model)
+        # - Row Context (d_model)
+        # - Col Context (d_model)
+        # - Box Context (d_model)
+        # - Attention Context (d_model)
+        # Total input channels: 6 * d_model
+        self.mixer = nn.Sequential(
+            nn.Conv2d(d_model * 6, d_model, kernel_size=1, bias=False),
+            nn.GroupNorm(num_groups=32, num_channels=d_model),
+            nn.ReLU(inplace=True),
+            # Bottleneck to refine features
+            nn.Conv2d(d_model, d_model, kernel_size=1, bias=False),
+            nn.GroupNorm(num_groups=32, num_channels=d_model),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        """Forward pass."""
+        residual = x
+        b, c, h, w = x.shape
+
+        # 1. Local
+        local_feat = self.conv_local(x)
+
+        # 2. Global Contexts (Mean pooling)
+        # Row Context: (B, C, H, 1) -> Expand
+        row_ctx = x.mean(dim=3, keepdim=True).expand(b, c, h, w)
+
+        # Col Context: (B, C, 1, W) -> Expand
+        col_ctx = x.mean(dim=2, keepdim=True).expand(b, c, h, w)
+
+        # Box Context
+        # Reshape to (B, C, 3, 3, 3, 3) -> Mean(4,5) -> Expand -> Reshape
+        x_box = x.view(b, c, 3, 3, 3, 3)
+        box_mean = x_box.mean(dim=(4, 5), keepdim=True)
+        box_ctx = box_mean.expand_as(x_box).reshape(b, c, h, w)
+
+        # 2b. Attention Context
+        # Flatten (B, C, H, W) -> (B, H*W, C) for attention
+        x_flat = x.flatten(2).transpose(1, 2)
+        attn_out, _ = self.attention(x_flat, x_flat, x_flat)
+        attn_ctx = attn_out.transpose(1, 2).view(b, c, h, w)
+
+        # 3. Mix
+        combined = torch.cat([x, local_feat, row_ctx, col_ctx, box_ctx, attn_ctx], dim=1)
+        out = self.mixer(combined)
+
+        return out + residual
 
 
 class ACTReasoningBlock(nn.Module):
@@ -54,9 +128,9 @@ class ACTReasoningBlock(nn.Module):
     It outputs both the next state and a scalar halting probability.
     """
 
-    def __init__(self, d_model: int, n_heads: int, halting_bias: float | None = -1.0):
+    def __init__(self, d_model: int, halting_bias: float | None = -1.0):
         super().__init__()
-        self.reasoning = GlobalReasoningBlock(d_model, n_heads)
+        self.reasoning = EnhancedReasoningBlock(d_model)
 
         # The "halting neuron" is a linear layer that maps the global average
         # of cell features to a single logit.
@@ -105,7 +179,7 @@ class DQNSolverCNN6(nn.Module):
         _input_shape,
         _output_size,
         device=None,
-        max_steps: int = 16,
+        max_steps: int = 32,
         halt_threshold: float = 0.99,
         halting_bias: float | None = -4.0,
     ):
@@ -113,7 +187,7 @@ class DQNSolverCNN6(nn.Module):
         self.device = device
         self.max_steps = max_steps
         self.halt_threshold = halt_threshold
-        d_model = 128
+        d_model = 256
 
         # 1. Perception: Extract geometric constraints
         self.constraint_conv = SudokuConstraintConv(10, 48)
@@ -127,10 +201,14 @@ class DQNSolverCNN6(nn.Module):
         )
 
         # 3. Recurrent Global Reasoning with ACT
-        self.reasoning_block = ACTReasoningBlock(d_model, n_heads=4, halting_bias=halting_bias)
+        self.reasoning_block = ACTReasoningBlock(d_model, halting_bias=halting_bias)
 
         # 4. Output Head: Project each cell's final embedding to 9 digit scores.
-        self.fc = nn.Linear(d_model, 9)
+        self.head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(inplace=True),
+            nn.Linear(d_model, 9),
+        )
 
     def forward(self, x):
         """Forward pass."""
@@ -201,7 +279,7 @@ class DQNSolverCNN6(nn.Module):
 
         # --- Output ---
         final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)
-        q_values = self.fc(final_state).view(b, -1)
+        q_values = self.head(final_state).view(b, -1)
 
         # Return ponder_cost for the loss function
         return q_values, ponder_cost

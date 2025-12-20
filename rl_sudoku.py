@@ -171,8 +171,18 @@ class PuzzleGenerator:
     def set_difficulty(self, min_clues: int, max_clues: int):
         """Atomically updates the difficulty range for the workers."""
         with self.min_clues.get_lock(), self.max_clues.get_lock():
+            if self.min_clues.value == min_clues and self.max_clues.value == max_clues:
+                return
+
             self.min_clues.value = min_clues
             self.max_clues.value = max_clues
+
+        # Clear the queue to remove puzzles of the old difficulty
+        while not self.puzzle_queue.empty():
+            try:
+                self.puzzle_queue.get_nowait()
+            except Exception:
+                break
 
 
 def action_encode(row, col, digit):
@@ -1010,11 +1020,13 @@ def optimize_model(
     torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
     optimizer.step()
 
+    if ponder_cost is None:
+        return (0.0, 0.0, 0.0)
     return (
             ponder_cost.min().item(),
             ponder_cost.mean().item(),
             ponder_cost.max().item(),
-         ) if ponder_cost is not None else (0.0, 0.0, 0.0)
+         )
 
 
 def prevent_sleep():
@@ -1323,7 +1335,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
                     f"Ponder Penalty: {current_ponder_penalty:.4f}, "
                     # f"Batch Ponder: ({b_p_min:.2f},{b_p_mean:.2f},{b_p_max:.2f}) "
-                    f"Ponder: ({e_p_min:.2f},{e_p_mean:.2f},{e_p_max:.2f}) "
+                    f"Ponder: ({e_p_min:5.2f},{e_p_mean:5.2f},{e_p_max:5.2f}) "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
                     f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
@@ -1468,7 +1480,7 @@ def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_so
     print(
         f"  Game  {i_game:6d} of {num_generated_games:6d}: "
         f"Steps: {steps:3d}, "
-        f"Ponder: ({p_min:.2f},{p_mean:.2f},{p_max:.2f}) "
+        f"Ponder: ({p_min:5.2f},{p_mean:5.2f},{p_max:5.2f}) "
         # f"Epoch Steps: {epoch_steps_done:6d}, "
         # f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
         f"Cells: {solved_ratio}, Groups: {groups_completed}, "
