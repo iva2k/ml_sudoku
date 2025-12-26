@@ -187,7 +187,7 @@ class DQNSolverCNN6(nn.Module):
         self.device = device
         self.max_steps = max_steps
         self.halt_threshold = halt_threshold
-        d_model = 256
+        d_model = 192
 
         # 1. Perception: Extract geometric constraints
         self.constraint_conv = SudokuConstraintConv(10, 48)
@@ -212,6 +212,68 @@ class DQNSolverCNN6(nn.Module):
 
     def forward(self, x):
         """Forward pass."""
+        b, _c, _h, _w = x.shape
+        x = self.reduce(self.constraint_conv(x))
+
+        # --- ACT Loop (Full Batch / GPU Optimized) ---
+        # We run the reasoning block on the full batch every step.
+        # This avoids CPU-GPU synchronization and dynamic memory allocation (x[mask]),
+        # which caused significant slowdowns.
+        halt_accum = torch.zeros((b, 1), device=self.device)
+        ponder_cost = torch.zeros(b, device=self.device)
+        state_sum = torch.zeros_like(x)
+
+        for _step_counter in range(self.max_steps):
+            # 1. Reasoning (Full Batch)
+            x_next, halt_prob = self.reasoning_block(x)
+
+            if self.training:
+                # Aggressively scale down halting probability
+                scale = torch.rand_like(halt_prob) * 0.5 + 0.01
+                halt_prob = halt_prob * scale
+
+            # 2. ACT Accumulation
+            # Calculate how much probability mass is left for this step
+            remainder = 1.0 - halt_accum
+
+            # The probability used this step is min(predicted, remainder)
+            step_prob = torch.min(halt_prob, remainder)
+
+            # Update accumulators
+            halt_accum += step_prob
+
+            # Cost is 1.0 for every step where we haven't fully halted yet.
+            ponder_cost += (remainder > 1e-6).float().squeeze(-1)
+
+            # Update State Sum (Weighted average of results)
+            state_sum = state_sum + (x_next * step_prob.view(-1, 1, 1, 1))
+
+            # Update x for next step (Unconditional update keeps pipeline full)
+            x = x_next
+
+            # Periodic check to break early (e.g., every 4 steps) to reduce sync overhead
+            if _step_counter % 4 == 3:
+                if (halt_accum > self.halt_threshold).all():
+                    break
+
+        # Differentiable Ponder Cost Calculation (Required for the ACT Method)
+        # The remainder is the "leftover" probability budget.
+        remainder = 1.0 - halt_accum
+        # The final state sum includes the state weighted by the remainder.
+        state_sum += x * remainder.view(b, 1, 1, 1)
+
+        # The total ponder cost is the number of steps taken (N) plus the remainder (R_N).
+        ponder_cost += remainder.squeeze(-1)
+
+        # --- Output ---
+        final_state = state_sum.permute(0, 2, 3, 1).reshape(b, 81, -1)
+        q_values = self.head(final_state).view(b, -1)
+
+        # Return ponder_cost for the loss function
+        return q_values, ponder_cost
+
+    def forward_running(self, x):
+        """Forward pass (only process running ACT in the batch)."""
         b, _c, _h, _w = x.shape
         x = self.reduce(self.constraint_conv(x))
 
