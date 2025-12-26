@@ -48,6 +48,7 @@ from dqn_cnn3 import DQNSolverCNN3
 from dqn_cnn4 import DQNSolverCNN4
 from dqn_cnn5 import DQNSolverCNN5
 from dqn_cnn6 import DQNSolverCNN6
+from dqn_cnn7 import DQNSolverCNN7
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
@@ -1586,7 +1587,7 @@ def parse_args():
         "--model",
         type=str,
         default="cnn6",
-        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "cnn6", "transformer1"],
+        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "cnn6", "cnn7", "transformer1"],
         help="Model architecture to use.",
     )
     # Training arguments
@@ -1766,6 +1767,8 @@ def main() -> int:
         solver = DQNSolverCNN5
     elif args.model == "cnn6":
         solver = DQNSolverCNN6
+    elif args.model == "cnn7":
+        solver = DQNSolverCNN7
     elif args.model == "transformer1":
         solver = DQNSolverTransformer
     else:
