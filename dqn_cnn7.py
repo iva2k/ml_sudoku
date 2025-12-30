@@ -52,6 +52,41 @@ Pre-training:
       55 |        0 |          5 |         0.0%
 Final Capability Score: 7.090
 
+Post-Training (17k episodes):
+
+  Blanks |   Solved |   Unsolved |   Solve Rate
+-------- + -------- + ---------- + ------------
+       3 |      208 |          1 |        99.5%
+       4 |      198 |          1 |        99.5%
+       5 |      192 |          2 |        99.0%
+       6 |      206 |          1 |        99.5%
+       7 |      189 |          8 |        95.9%
+       8 |      202 |          7 |        96.7%
+       9 |      170 |         19 |        89.9%
+      10 |      177 |         24 |        88.1%
+      11 |      181 |         27 |        87.0%
+      12 |      167 |         35 |        82.7%
+      13 |      183 |         57 |        76.2%
+      14 |      140 |         57 |        71.1%
+      15 |      147 |         78 |        65.3%
+      16 |      107 |         93 |        53.5%
+      17 |      120 |         94 |        56.1%
+      18 |      111 |        105 |        51.4%
+      19 |       66 |        124 |        34.7%
+      20 |       67 |        119 |        36.0%
+      21 |       51 |        153 |        25.0%
+      22 |       42 |        141 |        23.0%
+      23 |       42 |        184 |        18.6%
+      24 |       31 |        197 |        13.6%
+      25 |       13 |        183 |         6.6%
+      26 |       13 |        184 |         6.6%
+      27 |       16 |        203 |         7.3%
+      28 |        3 |        190 |         1.6%
+      29 |        5 |        218 |         2.2%
+      30 |        3 |        214 |         1.4%
+      31 |        2 |        214 |         0.9%
+Final Capability Score: 0.334
+
 """
 
 import torch
@@ -184,6 +219,8 @@ class SudokuTransformerBlock(nn.Module):
         )
 
     def forward(self, x):
+        """Forward pass."""
+
         # 1. Parallel Attention
         residual = x
         x_norm = self.norm1(x)
@@ -197,14 +234,14 @@ class SudokuTransformerBlock(nn.Module):
         combined = torch.cat([out_row, out_col, out_box], dim=1)
         x_attn = self.mixer(combined)
 
-        x = x + x_attn + residual
+        x = residual + x_attn
 
         # 2. FFN
         residual = x
         x_norm = self.norm2(x)
         x_ffn = self.ffn(x_norm)
 
-        x = x + x_ffn + residual
+        x = residual + x_ffn
 
         return x
 
