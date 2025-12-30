@@ -1178,13 +1178,11 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             final_episode = i_episode == args.start_episode + args.episodes - 1
 
             # 1. Adaptive Curriculum Learning
-            curriculum_level = check_curriculum_progress(
+            new_level = check_curriculum_progress(
                 curriculum_level, recent_solves
             )
-            if (
-                curriculum_level < len(CURRICULUM_LEVELS) - 1
-                and len(recent_solves) == recent_solves.maxlen
-            ):
+            if new_level != curriculum_level:
+                curriculum_level = new_level
                 # Reset window for new level
                 recent_solves = deque(
                     maxlen=CURRICULUM_LEVELS[curriculum_level].get("eval_window")
