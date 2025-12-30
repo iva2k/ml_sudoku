@@ -23,6 +23,7 @@ training-efficient on GPUs due to parallelizable attention heads (within each st
 
 Pre-training:
 
+--- Test Performance by Difficulty ---
   Blanks |   Solved |   Unsolved |   Solve Rate
 -------- + -------- + ---------- + ------------
        3 |        5 |          0 |       100.0%
@@ -32,25 +33,29 @@ Pre-training:
        7 |        5 |          0 |       100.0%
        8 |        4 |          1 |        80.0%
        9 |        5 |          0 |       100.0%
-      10 |        5 |          0 |       100.0%
-      11 |        3 |          2 |        60.0%
+      10 |        4 |          1 |        80.0%
+      11 |        4 |          1 |        80.0%
       12 |        5 |          0 |       100.0%
-      13 |        4 |          1 |        80.0%
+      13 |        5 |          0 |       100.0%
       14 |        4 |          1 |        80.0%
-      15 |        3 |          2 |        60.0%
-      16 |        3 |          2 |        60.0%
-      17 |        3 |          2 |        60.0%
-      18 |        2 |          3 |        40.0%
+      15 |        4 |          1 |        80.0%
+      16 |        4 |          1 |        80.0%
+      17 |        2 |          3 |        40.0%
+      18 |        3 |          2 |        60.0%
       19 |        1 |          4 |        20.0%
-      20 |        1 |          4 |        20.0%
-      21 |        3 |          2 |        60.0%
+      20 |        0 |          5 |         0.0%
+      21 |        1 |          4 |        20.0%
       22 |        1 |          4 |        20.0%
       23 |        1 |          4 |        20.0%
-      24 |        1 |          4 |        20.0%
-      25 |        0 |          5 |         0.0%
+      24 |        2 |          3 |        40.0%
+      25 |        1 |          4 |        20.0%
+      26 |        1 |          4 |        20.0%
+      27 |        0 |          5 |         0.0%
+      28 |        1 |          4 |        20.0%
+      29 |        0 |          5 |         0.0%
       ...|
       55 |        0 |          5 |         0.0%
-Final Capability Score: 7.090
+Final Capability Score: 7.101
 
 Post-Training (17k episodes):
 
@@ -202,7 +207,7 @@ class SudokuTransformerBlock(nn.Module):
 
         # Mixer / Projection for the parallel branches
         self.mixer = nn.Sequential(
-            nn.Conv2d(d_model * 3, d_model, kernel_size=1, bias=False),
+            nn.Conv2d(d_model * 4, d_model, kernel_size=1, bias=False),
             nn.GroupNorm(32, d_model),
             nn.ReLU(inplace=True),
         )
@@ -218,12 +223,15 @@ class SudokuTransformerBlock(nn.Module):
             nn.Conv2d(d_model * 4, d_model, kernel_size=1, bias=False),
         )
 
-    def forward(self, x):
+    def forward(self, x, x0=None):
         """Forward pass."""
 
         # 1. Parallel Attention
         residual = x
         x_norm = self.norm1(x)
+        
+        if x0 is None:
+            x0 = x
 
         # Run all 3 branches
         out_row = self.attn_row(x_norm)
@@ -231,7 +239,7 @@ class SudokuTransformerBlock(nn.Module):
         out_box = self.attn_box(x_norm)
 
         # Concatenate and Mix
-        combined = torch.cat([out_row, out_col, out_box], dim=1)
+        combined = torch.cat([out_row, out_col, out_box, x0], dim=1)
         x_attn = self.mixer(combined)
 
         x = residual + x_attn
@@ -289,12 +297,13 @@ class DQNSolverCNN7(nn.Module):
         # 1. Embed
         x = self.constraint_conv(x)
         x = self.embedding(x)
+        x0 = x
 
         # 2. Recurrent Reasoning
         # We implicitly unroll this loop during training (BPTT).
         # Since 'self.transformer' is the same module, weights are tied.
         for _ in range(self.reasoning_steps):
-            x = self.transformer(x)
+            x = self.transformer(x, x0)
 
         # 3. Output
         logits = self.head(x)
