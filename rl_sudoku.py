@@ -1327,19 +1327,27 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                     f"/C:{stats['completed_cols']}"
                     f"/B:{stats['completed_boxes']}"
                 )
+
+                # Calculate curriculum progress string
+                curr_threshold = CURRICULUM_LEVELS[curriculum_level].get("solve_rate_threshold")
+                curr_progress_str = ""
+                if curr_threshold is not None and len(recent_solves) > 0:
+                    current_rate = sum(recent_solves) / len(recent_solves)
+                    curr_progress_str = f" ({current_rate:3.0%} of {curr_threshold:3.0%})"
+
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
-                    f"Level: {curriculum_level:2d}/{len(CURRICULUM_LEVELS):2d}, "
+                    f"Level: {curriculum_level:2d}/{len(CURRICULUM_LEVELS):2d}{curr_progress_str}, "
                     f"Steps: {episode_steps:3d}, "
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
-                    f"Ponder Penalty: {current_ponder_penalty:.4f}, "
+                    # f"Ponder Penalty: {current_ponder_penalty:.4f}, "
                     # f"Batch Ponder: ({b_p_min:.2f},{b_p_mean:.2f},{b_p_max:.2f}) "
-                    f"Ponder: ({e_p_min:5.2f},{e_p_mean:5.2f},{e_p_max:5.2f}) "
+                    # f"Ponder: ({e_p_min:5.2f},{e_p_mean:5.2f},{e_p_max:5.2f}) "
                     f"Cells: {solved_ratio}, Groups: {groups_completed}, "
                     f"({'    Solved' if episode_solved else 'NOT Solved'}), "
-                    f"Total Reward: {episode_reward: 8.2f}{best_reward_str}, "
+                    f"Total Reward: {episode_reward: 8.2f}{best_reward_str}"  # ", "
                 )
 
             # 10. Save the model periodically or at the end of training
