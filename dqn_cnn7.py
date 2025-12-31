@@ -208,8 +208,6 @@ class SudokuTransformerBlock(nn.Module):
         # Mixer / Projection for the parallel branches
         self.mixer = nn.Sequential(
             nn.Conv2d(d_model * 4, d_model, kernel_size=1, bias=False),
-            nn.GroupNorm(32, d_model),
-            nn.ReLU(inplace=True),
         )
 
         # Norms
