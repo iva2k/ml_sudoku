@@ -49,6 +49,7 @@ from dqn_cnn4 import DQNSolverCNN4
 from dqn_cnn5 import DQNSolverCNN5
 from dqn_cnn6 import DQNSolverCNN6
 from dqn_cnn7 import DQNSolverCNN7
+from dqn_cnn8 import DQNSolverCNN8
 from dqn_transformer import DQNSolver as DQNSolverTransformer
 
 from sudoku import (
@@ -1309,12 +1310,12 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 #     print(format_grid_to_string(env.initial_puzzle))
 
                 # Calculate aggregate ponder stats for the whole episode
-                if episode_ponder_stats:
-                    e_p_min = min(episode_ponder_stats)
-                    e_p_mean = sum(episode_ponder_stats) / len(episode_ponder_stats)
-                    e_p_max = max(episode_ponder_stats)
-                else:
-                    e_p_min, e_p_mean, e_p_max = 0.0, 0.0, 0.0
+                # if episode_ponder_stats:
+                #     e_p_min = min(episode_ponder_stats)
+                #     e_p_mean = sum(episode_ponder_stats) / len(episode_ponder_stats)
+                #     e_p_max = max(episode_ponder_stats)
+                # else:
+                #     e_p_min, e_p_mean, e_p_max = 0.0, 0.0, 0.0
 
                 stats = env.episode_stats
                 solved_ratio = (
@@ -1592,8 +1593,8 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="cnn6",
-        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "cnn6", "cnn7", "transformer1"],
+        default="cnn8",
+        choices=["cnn1", "cnn2", "cnn3", "cnn4", "cnn5", "cnn6", "cnn7", "cnn8", "transformer1"],
         help="Model architecture to use.",
     )
     # Training arguments
@@ -1775,6 +1776,8 @@ def main() -> int:
         solver = DQNSolverCNN6
     elif args.model == "cnn7":
         solver = DQNSolverCNN7
+    elif args.model == "cnn8":
+        solver = DQNSolverCNN8
     elif args.model == "transformer1":
         solver = DQNSolverTransformer
     else:

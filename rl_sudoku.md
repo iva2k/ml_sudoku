@@ -303,6 +303,14 @@ While `cnn7` showed promise in pre-training (solving 100% of easy puzzles), it s
 
 3. **Lack of Gating**: The absence of a mechanism to "lock" a cell's state once solved meant the model could not protect established truths from the noise of ongoing reasoning in other parts of the grid.
 
+#### 5.5.6. `cnn8`: Gated Recurrent Axial Transformer
+
+To address the stability issues of `cnn7`, `cnn8` introduces a **Gating Mechanism** inspired by Gated Recurrent Units (GRUs).
+
+* **Convolutional GRU**: Instead of a simple additive update ($x_{t+1} = x_t + \Delta$), `cnn8` uses a ConvGRU cell to update the board state. This provides the model with an explicit "Update Gate" ($z$) and "Reset Gate" ($r$).
+* **Selective Memory**: The gating mechanism allows the model to learn to **lock in** the state of solved cells (by setting the update gate to 0), effectively protecting them from the noise of further reasoning. This solves the catastrophic forgetting problem seen in `cnn7`.
+* **Disentangled Attention**: Unlike `cnn7` which summed the outputs of Row, Column, and Box attention, `cnn8` concatenates them. This preserves the distinct information from each view and lets the GRU's mixing layer decide how to combine them based on the current context.
+
 ### 5.6. Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:
