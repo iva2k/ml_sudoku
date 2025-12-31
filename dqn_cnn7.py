@@ -226,7 +226,7 @@ class SudokuTransformerBlock(nn.Module):
         # 1. Parallel Attention
         residual = x
         x_norm = self.norm1(x)
-        
+
         if x0 is None:
             x0 = x
 
@@ -273,14 +273,14 @@ class DQNSolverCNN7(nn.Module):
             nn.GroupNorm(32, d_model),
             nn.ReLU(inplace=True),
         )
-        
+
         # Positional Embeddings (Learnable)
         # Helps the model distinguish identical features in different locations (e.g. empty board)
         self.pos_embedding = nn.Parameter(torch.randn(1, d_model, 9, 9) * 0.02)
 
         # 2. Recurrent Transformer Block
         self.transformer = SudokuTransformerBlock(d_model, num_heads=4)
-        
+
         # Final Norm (Critical for Pre-Norm architectures)
         self.norm_final = nn.GroupNorm(32, d_model)
 
@@ -313,7 +313,7 @@ class DQNSolverCNN7(nn.Module):
 
         # 3. Output
         x = self.head(x)  # (B, 9, 9, 9) -> (B, Digits, Rows, Cols)
-        
+
         # Permute to (B, Rows, Cols, Digits) and flatten to (B, 729)
         return x.permute(0, 2, 3, 1).reshape(b, -1)
 

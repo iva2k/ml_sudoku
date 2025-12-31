@@ -274,8 +274,34 @@ To fix this, we force the model to "occasionally" execute deeper steps during tr
 **Preliminary Results (Early Training ~800 Episodes):**
 
 * **Superior Trainability**: `cnn6` demonstrates significantly better convergence properties than previous architectures (`cnn4`, `cnn5`), successfully advancing to Curriculum Level 2 (Easy/Medium) where others stagnated at Level 1.
+
 * **Ponder Exploration**: Around episode 400, the model begins to explore the trade-off between thinking time and accuracy. Ponder steps vary between 2 and 17, with occasional intermediate values.
+
 * **Reward Correlation**: Currently, solved puzzles are highly correlated with maximum pondering (17 steps). The model appears to be learning that "thinking longer" maximizes the probability of a correct solution.
+
+* Despite the promising early results and solving more complex puzzles than all previous models (up to 31 blanks), the model training progress stalled as it was undable to learn to solve more difficult puzzles.
+
+Trying to improve `cnn6` model with added width and pondering depth, but it made the model super slow in training. It did not seem to improve complexity of puzzles it could solve in training or test.
+
+#### 5.5.5. `cnn7`: Recurrent Axial Transformer
+
+This model attempts to solve the computational efficiency issues of global attention by using **Axial Attention**.
+
+* **Axial Attention**: Instead of attending to all 81 cells ($O(N^2)$), the model runs three parallel attention branches: Row, Column, and Box. This strictly enforces Sudoku constraints and reduces complexity to $O(3 \cdot N \cdot 9^2)$.
+
+* **Fixed Recurrence**: It reverts to a fixed number of reasoning steps (like `cnn5`) to avoid the training instability of the dynamic halting mechanism in `cnn6`.
+
+* **Deep Reasoning**: It uses a deeper recurrence (16-32 steps) to allow for complex logical propagation.
+
+**Critique: The Stability-Plasticity Dilemma**
+
+While `cnn7` showed promise in pre-training (solving 100% of easy puzzles), it suffered from severe **Catastrophic Forgetting** during extensive training.
+
+1. **State Drift**: The additive residual connections ($x_{t+1} = x_t + \text{Attention}(x_t)$) caused the internal state to drift unbounded over many recurrent steps. Without a normalization or gating mechanism, signal magnitudes exploded, leading to numerical instability.
+
+2. **Forgetting Simple Patterns**: Because the model *must* update every cell at every step, it often "over-thought" simple, solved cells, introducing noise that eventually corrupted the correct values. This led to a paradoxical result where the model could solve some "Hard" puzzles but failed on "Super Easy" ones (3-4 blanks).
+
+3. **Lack of Gating**: The absence of a mechanism to "lock" a cell's state once solved meant the model could not protect established truths from the noise of ongoing reasoning in other parts of the grid.
 
 ### 5.6. Debugging Insights: Overcoming Training Stagnation
 
@@ -314,7 +340,7 @@ This architecture effectively parallelizes the workload, using idle CPU cores to
 
 ## 6. Performance Optimizations
 
-Generating millions of unique Sudoku puzzles for training and validating the agent requires highly optimized utility functions. Significant effort was invested in speeding up two critical components: `count_solutions()` and `get_unique_sudoku()`.
+Generating thousands of unique Sudoku puzzles for training and validating the agent requires highly optimized utility functions. Significant effort was invested in speeding up two critical components: `count_solutions()` and `get_unique_sudoku()`.
 
 ### 6.1. Optimizing `count_solutions()`
 
