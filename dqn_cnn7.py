@@ -31,31 +31,30 @@ Pre-training:
        5 |        5 |          0 |       100.0%
        6 |        5 |          0 |       100.0%
        7 |        5 |          0 |       100.0%
-       8 |        4 |          1 |        80.0%
+       8 |        5 |          0 |       100.0%
        9 |        5 |          0 |       100.0%
-      10 |        4 |          1 |        80.0%
-      11 |        4 |          1 |        80.0%
+      10 |        5 |          0 |       100.0%
+      11 |        3 |          2 |        60.0%
       12 |        5 |          0 |       100.0%
       13 |        5 |          0 |       100.0%
-      14 |        4 |          1 |        80.0%
+      14 |        3 |          2 |        60.0%
       15 |        4 |          1 |        80.0%
-      16 |        4 |          1 |        80.0%
-      17 |        2 |          3 |        40.0%
-      18 |        3 |          2 |        60.0%
+      16 |        3 |          2 |        60.0%
+      17 |        5 |          0 |       100.0%
+      18 |        2 |          3 |        40.0%
       19 |        1 |          4 |        20.0%
-      20 |        0 |          5 |         0.0%
-      21 |        1 |          4 |        20.0%
-      22 |        1 |          4 |        20.0%
-      23 |        1 |          4 |        20.0%
-      24 |        2 |          3 |        40.0%
+      20 |        2 |          3 |        40.0%
+      21 |        0 |          5 |         0.0%
+      22 |        0 |          5 |         0.0%
+      23 |        2 |          3 |        40.0%
+      24 |        0 |          5 |         0.0%
       25 |        1 |          4 |        20.0%
       26 |        1 |          4 |        20.0%
-      27 |        0 |          5 |         0.0%
-      28 |        1 |          4 |        20.0%
-      29 |        0 |          5 |         0.0%
+      27 |        3 |          2 |        60.0%
+      28 |        0 |          5 |         0.0%
       ...|
       55 |        0 |          5 |         0.0%
-Final Capability Score: 7.101
+Final Capability Score: 10.090
 
 Post-Training (17k episodes):
 
@@ -106,7 +105,7 @@ class AxialSudokuAttention(nn.Module):
     """
 
     def __init__(
-        self, d_model: int, mode: str, num_heads: int = 4, dropdown: float = 0.0
+        self, d_model: int, mode: str, num_heads: int = 4, dropout: float = 0.0
     ):
         super().__init__()
         self.mode = mode
@@ -115,7 +114,7 @@ class AxialSudokuAttention(nn.Module):
         # Self-Attention Layer
         # batch_first=True expects inputs of shape (Batch, SeqLen, Embedding)
         self.mha = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=num_heads, batch_first=True, dropout=dropdown
+            embed_dim=d_model, num_heads=num_heads, batch_first=True, dropout=dropout
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -274,16 +273,22 @@ class DQNSolverCNN7(nn.Module):
             nn.GroupNorm(32, d_model),
             nn.ReLU(inplace=True),
         )
+        
+        # Positional Embeddings (Learnable)
+        # Helps the model distinguish identical features in different locations (e.g. empty board)
+        self.pos_embedding = nn.Parameter(torch.randn(1, d_model, 9, 9) * 0.02)
 
         # 2. Recurrent Transformer Block
         self.transformer = SudokuTransformerBlock(d_model, num_heads=4)
+        
+        # Final Norm (Critical for Pre-Norm architectures)
+        self.norm_final = nn.GroupNorm(32, d_model)
 
         # 3. Output Head
         self.head = nn.Sequential(
             nn.Conv2d(d_model, d_model, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(d_model * 81, 9 * 81),  # Map to 729 logits
+            nn.Conv2d(d_model, 9, kernel_size=1),  # Output 9 logits per cell
         )
 
     def forward(self, x):
@@ -295,6 +300,7 @@ class DQNSolverCNN7(nn.Module):
         # 1. Embed
         x = self.constraint_conv(x)
         x = self.embedding(x)
+        x = x + self.pos_embedding
         x0 = x
 
         # 2. Recurrent Reasoning
@@ -303,9 +309,13 @@ class DQNSolverCNN7(nn.Module):
         for _ in range(self.reasoning_steps):
             x = self.transformer(x, x0)
 
+        x = self.norm_final(x)
+
         # 3. Output
-        logits = self.head(x)
-        return logits
+        x = self.head(x)  # (B, 9, 9, 9) -> (B, Digits, Rows, Cols)
+        
+        # Permute to (B, Rows, Cols, Digits) and flatten to (B, 729)
+        return x.permute(0, 2, 3, 1).reshape(b, -1)
 
 
 if __name__ == "__main__":
