@@ -4,13 +4,43 @@ This project implements a Reinforcement Learning agent to solve Sudoku puzzles.
 
 It uses a Deep Q-Network (DQN) with various architectural enhancements and training strategies like action masking, reward shaping, and curriculum learning.
 
-## 🧠 Low-Level RL Concepts
+## 1. Sudoku Puzzle
+
+### 1.1 Sudoku Rules
+
+"Sudoku" is a puzzle, where an initial 9x9 grid is given with some cells filled in with numbers. The goal is to fill all blank cells with numbers 1 through 9 such, tha each unit (row, column and nine 3x3 boxes) has all digits 1 thru 9 without repeating any digits. The puzzle should be solved without guessing, by pure logic deductions. The puzzle should have only 1 valid solution. It is possible to create intital grids with multiple solutions, but they are considered not valid sudoku puzzles.
+
+### 1.2. Sudoku Patterns
+
+To solve Sudoku at a human expert level, a model must master these patterns:
+
+#### 1.2.1. Naked & Hidden Singles
+
+A cell has only one candidate, or a candidate appears only once in a unit (row/col/box).
+
+#### 1.2.2. Intersections (Pointing Pairs / Box-Line Reduction)
+
+A candidate in a box is restricted to a single row, eliminating that candidate from the rest of the row.
+
+#### 1.2.3. Subsets (Naked/Hidden Pairs, Triples, Quads)
+
+$N$ cells in a unit share $N$ candidates. This eliminates these candidates from all other cells in the unit.
+
+#### 1.2.4. Fish (X-Wing, Swordfish, Jellyfish)
+
+A candidate appears exactly twice in $N$ rows, and these align in $N$ columns.
+
+#### 1.2.5. Chains & Coloring (XY-Wing, Simple Coloring)
+
+Long chains of implications (If A is 1 $\to$ B is not 1 $\to$ C is 1...).
+
+## 2. 🧠 Low-Level RL Concepts
 
 The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the formal structure for RL problems.
 
 ---
 
-### 1. The Markov Decision Process (MDP)
+### 2.1. The Markov Decision Process (MDP)
 
 * **Agent:** The solver (neural network).
 * **Environment:** The Sudoku grid and the rules of the game.
@@ -31,7 +61,7 @@ The Sudoku problem can be framed as a **Markov Decision Process (MDP)**, the for
 
 ---
 
-### 2. Deep Q-Network (DQN) Algorithm
+### 2.2. Deep Q-Network (DQN) Algorithm
 
 Since the state space (all possible Sudoku grids) is too large to store in a traditional Q-table, we'll use a deep neural network to approximate the Q-function, leading to **Deep Q-Learning (DQN)**.
 
@@ -45,9 +75,9 @@ $$y = r + \gamma \max_{a'} Q(s', a'; \theta^{-})$$
 
 ---
 
-## 🏗️ High-Level Implementation Steps
+## 3. 🏗️ High-Level Implementation Steps
 
-### 1. Environment Implementation
+### 3.1. Environment Implementation
 
 The environment defines the Sudoku game logic. We will use the `gymnasium` (formerly `gym`) library standard for a robust setup.
 
@@ -62,7 +92,7 @@ The environment defines the Sudoku game logic. We will use the `gymnasium` (form
   3. A **done** flag (True if the puzzle is solved or an irreversible mistake is made).
   4. An **info** dictionary (e.g., for debugging metrics).
 
-### 2. Network Model ($\text{Q-Network}$)
+### 3.2. Network Model ($\text{Q-Network}$)
 
 A **CNN-based Q-Network** is an excellent choice as it can naturally capture the local structure (rows, columns, $3 \times 3$ boxes) of the Sudoku board.
 
@@ -71,7 +101,7 @@ A **CNN-based Q-Network** is an excellent choice as it can naturally capture the
 * **Flatten and $\text{Dense}$ Layers:** Flatten the output of the CNN and pass it through a few $\text{Dense}$ layers to aggregate the features.
 * **Output Layer:** The final $\text{Dense}$ layer must have **$729$ outputs**, one for each possible action $(r, c, d)$. No activation (or a linear one) is used since the output is a Q-value (a score).
 
-### 3. Training Setup and Hyperparameters
+### 3.3. Training Setup and Hyperparameters
 
 * **RL Algorithm:** **Deep Q-Learning (DQN)** is a great starting point for this discrete action space.
 * **Policy:** Use an **$\epsilon$-greedy policy** for action selection:
@@ -84,9 +114,9 @@ A **CNN-based Q-Network** is an excellent choice as it can naturally capture the
   * **Batch Size:** Standard for deep learning (e.g., $32$ to $128$).
   * **Target Network Update Frequency:** Update $\theta^{-} \leftarrow \theta$ every $C$ steps (e.g., $C=1000$).
 
-## Three-Phase Implementation Plan
+## 4. Three-Phase Implementation Plan
 
-### Phase 1: Quick Setup and Code Carcass (Goal: Runnable Structure)
+### 4.1. Phase 1: Quick Setup and Code Carcass (Goal: Runnable Structure)
 
 This phase establishes the foundational structure, including imports, command-line arguments, and the skeletal definition of the three main components: the Environment, the Network, and the Replay Buffer.
 
@@ -96,7 +126,7 @@ This phase establishes the foundational structure, including imports, command-li
 2. **Define Carcass:** Create the primary Python file (`sudoku_rl.py`) containing the `main`, argument parsing, and placeholder classes for `SudokuEnv`, `DQNSolver`, and `ReplayBuffer`.
 3. **Basic $\text{main}$ Function:** Implement the core loop of initialization (env, agent, network) and a basic episode loop to test environment interaction (even if `step` returns dummy values).
 
-### Phase 2: Core Logic Implementation (Goal: Functioning Environment)
+### 4.2. Phase 2: Core Logic Implementation (Goal: Functioning Environment)
 
 This phase focuses on the heart of the Sudoku problem: defining the rules and state transitions.
 
@@ -110,7 +140,7 @@ This phase focuses on the heart of the Sudoku problem: defining the rules and st
    * Assign a simple reward: large positive reward for a *valid* move, large negative penalty for an *invalid* move (violating rules), small negative penalty for trying to overwrite a fixed cell.
 3. **Done Condition:** Check if the grid is fully filled *and* valid (solved).
 
-### Phase 3: Deep Q-Learning (DQN) Training (Goal: Learning Agent)
+### 4.3. Phase 3: Deep Q-Learning (DQN) Training (Goal: Learning Agent)
 
 This phase connects the environment to the PyTorch neural network and implements the learning algorithm.
 
@@ -121,9 +151,9 @@ This phase connects the environment to the PyTorch neural network and implements
 3. **Training Function (`optimize_model`):** Implement the DQN core: sample a batch, calculate the target Q-value using the Bellman equation and the **Target Network**, calculate MSE loss, and run backpropagation.
 4. **Full Training Loop:** Integrate $\epsilon$-greedy policy selection, step-by-step interaction with the environment, storage in the buffer, and periodic calls to `optimize_model`.
 
-## Improvements
+## 5. Improvements
 
-### Action masking
+### 5.1. Action masking
 
 That's a very common and important issue when applying Reinforcement Learning to constrained environments like Sudoku. What we can observe is the agent spending most of its time exploring the vast number of **illegal actions** (e.g., trying to place a number in a fixed starting cell, or trying to place a number in an already filled cell).
 
@@ -135,7 +165,7 @@ The best solution is **Action Masking** (or **Action Filtering**). This forces t
 
 We will introduce the `--masking` parameter. When enabled, the agent will only select actions that target blank, non-fixed cells, dramatically speeding up exploration and focusing learning on the true Sudoku rules.
 
-#### Key Changes in `rl_sudoku.py`
+#### 5.1.1. Key Changes in `rl_sudoku.py`
 
 1. **`generate_legal_mask(grid)`:** A new helper function that generates a boolean mask (size 729) where `True` indicates the action targets a blank cell.
 2. **`get_action`:**
@@ -144,13 +174,13 @@ We will introduce the `--masking` parameter. When enabled, the agent will only s
 3. **`optimize_model`:** The same masking logic is applied to the **Target Network's** Q-values when calculating the optimal future value $V(s')$, which is essential for stable learning.
 4. **`main`:** A new command-line argument `--masking` has been added.
 
-### Curriculum Learning: Staged Difficulty
+### 5.2. Curriculum Learning: Staged Difficulty
 
 Starting the training with very difficult Sudoku puzzles (e.g., only 25 clues) can be overwhelming for the agent. It's like asking a new student to solve an expert-level problem. The agent may fail to learn meaningful patterns.
 
 A better approach is **Curriculum Learning**, where the agent is first trained on easier problems and the difficulty is gradually increased as its performance improves.
 
-#### Implementation Plan
+#### 5.2.1. Implementation Plan
 
 We will implement a difficulty "staircase" based on the training episode number.
 
@@ -160,7 +190,7 @@ We will implement a difficulty "staircase" based on the training episode number.
 
 This staged approach helps stabilize training and leads to a more robust final policy.
 
-### Early Termination on Invalid Solution Path (ISP)
+### 5.3. Early Termination on Invalid Solution Path (ISP)
 
 In a Sudoku puzzle with a single unique solution, any move that does not match that solution immediately creates a board state from which the original puzzle can no longer be solved. Allowing the agent to continue playing on this "poisoned" board introduces flawed data into the training process. The agent might learn spurious correlations from a state that is fundamentally unsolvable.
 
@@ -168,7 +198,7 @@ To prevent this, the environment's `step` function is designed to terminate an e
 
 If we went another way and allowed agent to make wrong moves, we would need to design for correcting or backtracking the wrong moves by providing additional channel in board state that marks clues that are given vs. the agent moves, and change the environment and the reward function to allow changing already made moves. That woul also require allowing much longer games.
 
-#### ISP Implementation
+#### 5.3.1. ISP Implementation
 
 1. **Check Against Solution:** In the `step` function, after an action is taken, it is first compared against the ground-truth solution.
 2. **Correct Move:** If the move matches the solution, the agent receives a positive reward, and the episode continues.
@@ -176,17 +206,17 @@ If we went another way and allowed agent to make wrong moves, we would need to d
 
 This approach ensures that the agent only learns from sequences of moves that are on a valid path to the correct solution, making training more efficient and focused.
 
-### Residual Connections for Deeper Networks
+### 5.4. Residual Connections for Deeper Networks
 
 As the network gets deeper to capture more complex relationships across the Sudoku grid, it can become harder to train due to issues like the vanishing gradient problem. To combat this, we can introduce **Residual Connections** (or skip connections), a core concept from Residual Networks (ResNets).
 
 A residual block allows the network to bypass one or more layers, simply passing the input through. This makes it easier for gradients to flow during backpropagation and allows the model to learn an "identity" function if a block of layers is not useful. For Sudoku, this means we can build a deeper, more powerful CNN that can better integrate local (3x3 box) and global (full grid) information without sacrificing training stability.
 
-### Model Architecture Evolution: From CNNs to Adaptive Transformers
+### 5.5. Model Architecture Evolution: From CNNs to Adaptive Transformers
 
 The project has evolved through several model architectures, each designed to address the weaknesses of its predecessor and better capture the logical structure of Sudoku.
 
-#### `cnn4`: Hybrid CNN-Attention
+#### 5.5.1. `cnn4`: Hybrid CNN-Attention
 
 This model combines the strengths of CNNs and Transformers.
 
@@ -194,7 +224,7 @@ This model combines the strengths of CNNs and Transformers.
 * **Attention for Reasoning (`GlobalReasoningBlock`)**: After perception, it uses a Transformer-style self-attention mechanism. This allows every cell to look at every other cell and dynamically decide which are most important for updating its own state, which is critical for solving complex, non-local patterns.
 * **Iterative Refinement**: The model stacks multiple `GlobalReasoningBlock`s. Each block represents one step of logical deduction, allowing the model to perform chained reasoning.
 
-#### `cnn5`: Recurrent Reasoning
+#### 5.5.2. `cnn5`: Recurrent Reasoning
 
 This model builds upon `cnn4` by addressing a key limitation: the fixed depth of logical reasoning. While stacking reasoning blocks allows for chained deductions, the number of steps is static.
 
@@ -203,7 +233,7 @@ This model builds upon `cnn4` by addressing a key limitation: the fixed depth of
 * **Parameter Efficiency**: Instead of learning N separate reasoning blocks, the model learns a single, more powerful, and generalizable reasoning unit that is applied repeatedly.
 * **Deeper, Fixed Reasoning**: The number of iterations becomes a hyperparameter that controls the maximum "thinking time" or logical depth the model is allowed. This gives the model a deeper, fixed-length "thinking time" to solve complex puzzles.
 
-#### `cnn6`: Adaptive Computation Time (ACT)
+#### 5.5.3. `cnn6`: Adaptive Computation Time (ACT)
 
 This model introduces a truly dynamic reasoning process, allowing the model to learn *when to stop thinking*. It builds on the recurrent structure of `cnn5` but adds a halting mechanism inspired by the "Adaptive Computation Time" (ACT) paper.
 
@@ -217,7 +247,7 @@ This architecture is the most sophisticated, as it allows the model's computatio
 
 * **Ponder Cost Annealing**: A fixed ponder penalty can be too restrictive early in training, as it punishes the model for "thinking" before it has even learned the basic rules. To solve this, we use **Ponder Cost Annealing**. The training starts with a very low (or zero) penalty, allowing the model to freely explore its computational depth to learn the task. The penalty is kept at 0 for early Curriculum Levels, then gradually increased over a set number of episodes, which slowly encourages the model to become more computationally efficient *after* it has developed a foundational understanding of the game. This leads to more stable training and better final performance.
 
-#### ACT Implementation Details & Preliminary Results
+#### 5.5.4. ACT Implementation Details & Preliminary Results
 
 The `cnn6` model implements a sophisticated ACT mechanism that changes number of reasoning steps, adjusting the "thinking" duration:
 
@@ -247,7 +277,7 @@ To fix this, we force the model to "occasionally" execute deeper steps during tr
 * **Ponder Exploration**: Around episode 400, the model begins to explore the trade-off between thinking time and accuracy. Ponder steps vary between 2 and 17, with occasional intermediate values.
 * **Reward Correlation**: Currently, solved puzzles are highly correlated with maximum pondering (17 steps). The model appears to be learning that "thinking longer" maximizes the probability of a correct solution.
 
-### Debugging Insights: Overcoming Training Stagnation
+### 5.6. Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:
 
@@ -255,7 +285,7 @@ During development, the agent's performance completely stagnated, with the capab
 
 2. **Data Type Inconsistency:** The state representation was inconsistently handled, switching between `np.int32` and `np.float32` at various stages. This created unnecessary overhead and potential for subtle errors, particularly in functions like `generate_legal_mask` that rely on integer-based logic to build sets. The pipeline was refactored to use `np.int32` for all CPU-side environment logic and `torch.FloatTensor` (via one-hot encoding) exclusively for GPU-side network computations. This created a cleaner, more robust, and more efficient data flow.
 
-### Training Performance Optimization via Vectorization
+### 5.7. Training Performance Optimization via Vectorization
 
 Initial implementations of the training loop, particularly the `optimize_model` function, suffered from CPU bottlenecks that led to low GPU utilization. This was caused by processing data sequentially within Python loops, forcing the GPU to wait for data.
 
@@ -270,7 +300,7 @@ The key components of the optimized pipeline are:
 
 These changes ensure that the entire batch processing pipeline - from sampling the replay buffer to calculating the loss - stays on the GPU, maximizing utilization and allowing the training loop to keep pace with the GPU's computational speed.
 
-### Asynchronous Puzzle Generation
+### 5.8. Asynchronous Puzzle Generation
 
 A significant performance bottleneck emerged from the need to generate and validate puzzles on-demand, especially the check for a unique solution, which is a CPU-intensive backtracking task. This caused the highly optimized GPU training pipeline to stall while waiting for the CPU.
 
@@ -282,11 +312,11 @@ To solve this, an **asynchronous puzzle generation** system was implemented usin
 
 This architecture effectively parallelizes the workload, using idle CPU cores to prepare high-quality training data in advance, ensuring the GPU is never left waiting and maximizing hardware utilization.
 
-## Performance Optimizations
+## 6. Performance Optimizations
 
 Generating millions of unique Sudoku puzzles for training and validating the agent requires highly optimized utility functions. Significant effort was invested in speeding up two critical components: `count_solutions()` and `get_unique_sudoku()`.
 
-### Optimizing `count_solutions()`
+### 6.1. Optimizing `count_solutions()`
 
 The `count_solutions()` function is essential for verifying that a generated puzzle has exactly one unique solution. A naive backtracking solver can be prohibitively slow, especially on puzzles with many blank cells. The initial implementation, which took over 10 minutes with 64 calls to `count_solutions()` for a difficult generation test case, was optimized to complete the same task in under a second (around 840ms).
 
@@ -298,7 +328,7 @@ This performance gain was achieved through a combination of algorithmic heuristi
 
 3. **Pre-computation of Empty Cells**: The list of all empty cells is now generated only once at the beginning of the search, rather than being rediscovered on each recursive step. This eliminates redundant scanning of the grid.
 
-### Optimizing `get_unique_sudoku()`
+### 6.2. Optimizing `get_unique_sudoku()`
 
 The `get_unique_sudoku()` function generates a puzzle with a specified number of clues by removing cells from a fully solved grid. The core challenge is to remove as many cells as possible while ensuring the puzzle still has only one solution, which requires frequent calls to the expensive `count_solutions()` function. A naive approach of removing cells one by one and checking for uniqueness each time is computationally infeasible.
 
@@ -316,7 +346,7 @@ By combining these two methods with their additional heuristics, the generator c
 
 Together with the optimization of `count_solutions()`, the speed of `get_unique_sudoku()` was improved from over 10 minutes to just 840ms for a particularly difficult test case where 64 calls to `count_solution()` were needed to find 24 key cells while generating a puzzle with 54 blanks.
 
-## Advanced Training Techniques
+## 7. Advanced Training Techniques
 
 While the model architecture is crucial, its performance is significantly enhanced
 by the training methodology implemented in `rl_sudoku.py`.
