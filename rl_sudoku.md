@@ -347,6 +347,38 @@ To address the stability issues of `cnn7`, `cnn8` introduces a **Gating Mechanis
 * **Selective Memory**: The gating mechanism allows the model to learn to **lock in** the state of solved cells (by setting the update gate to 0), effectively protecting them from the noise of further reasoning. This solves the catastrophic forgetting problem seen in `cnn7`.
 * **Disentangled Attention**: Unlike `cnn7` which summed the outputs of Row, Column, and Box attention, `cnn8` concatenates them. This preserves the distinct information from each view and lets the GRU's mixing layer decide how to combine them based on the current context.
 
+**Critique: The Parallel Bottleneck**
+
+The primary weakness of `cnn8` is the **Parallel Attention** mechanism. While computationally efficient on GPUs, running Row, Column, and Box attention simultaneously creates a **latency in logical propagation**.
+
+* **Step Latency**: If the Row branch discovers a constraint (e.g., a Naked Pair), the Column branch—running in parallel on the *old* state—cannot see this restriction until the *next* recurrent step.
+* **Inefficiency**: For complex patterns like Intersections (Pointing/Claiming) or Chains that require "handshaking" between orthogonal units, the model must burn multiple reasoning steps just to propagate information from rows to columns.
+
+#### 5.5.7. `cnn9`: Sequential Gated Recurrent Axial Transformer
+
+To fix the propagation latency of `cnn8`, `cnn9` switches from **Parallel** to **Sequential** attention within the reasoning block.
+
+* **Cascaded Reasoning**: Instead of running branches in parallel, `cnn9` processes **Row $\to$ Column $\to$ Box** sequentially within a single reasoning step.
+* **Immediate Feedback**: The output of the Row Attention is immediately fed into the Column Attention. This allows for **intra-step propagation**: a constraint found in a row is immediately visible to the column attention in the *same* step.
+* **Deep Residuals**: This effectively triples the logical depth of the network without increasing the number of parameters or the GRU step count, allowing for the detection of complex "Bent Sets" (Wings) and short chains in a single pass.
+
+**Latency vs. Logical Depth**
+
+`cnn9` increases **computational latency** (wall-clock time) per step because the attention branches must run in series. However, it significantly decreases **logical propagation latency**.
+
+* **The Trade-off**: In Sudoku, the bottleneck is often the *depth* of the reasoning chain.
+* **Parallel (CNN8)**: A chain between Row, Column and Box logic ($Row \to Col \to Box$) requires 2 full recurrent steps to propagate.
+* **Sequential (CNN9)**: The same chain can be traversed in a single recurrent step because the Column attention immediately sees the results of the Row attention.
+
+**Pattern Coverage Analysis**
+
+| Pattern Family | CNN9 Handling Strategy |
+| :--- | :--- |
+| **Singles** | **Direct**: Axial attention naturally identifies unique candidates in any unit. |
+| **Intersections** | **Asymmetric**: Row $\to$ Box restrictions propagate instantly. Box $\to$ Row restrictions take 1 recurrent step (since Box is processed last). |
+| **Fish (X-Wing)** | **Optimized**: Row attention identifies candidate positions. Column attention runs immediately after and can detect the vertical alignment required for X-Wings in the same step. |
+| **Chains (AIC)** | **Deep**: Because Row and Column attention are cascaded, the model can resolve "Row link $\to$ Column link" inferences within a single step, effectively "short-circuiting" long inference chains. |
+
 ### 5.6. Debugging Insights: Overcoming Training Stagnation
 
 During development, the agent's performance completely stagnated, with the capability score failing to improve over tens of thousands of episodes. And it was happening for all model versions tried - cnn1, cnn2, cnn3, transformer1. A deep dive into the training loop revealed two critical, non-obvious issues:
