@@ -24,10 +24,12 @@ We define the Environment, the Network, and the Replay Buffer
 """
 
 import argparse
+import csv
 from collections import deque, namedtuple
 import ctypes
 from datetime import timedelta
 import math
+import os
 import platform
 import random
 from typing import Any, List, Optional, Tuple
@@ -748,25 +750,76 @@ class DifficultyHistogram:
                 self.unsolved_by_difficulty.get(blank_cells, 0) + 1
             )
 
-    def log(self, title: str):
+    def log(self, title: str, baseline_hist: "DifficultyHistogram" = None) -> None:
         """Prints the formatted histogram table to the console."""
         print(f"\n--- {title} ---")
-        all_difficulties = sorted(
-            set(self.solved_by_difficulty.keys())
-            | set(self.unsolved_by_difficulty.keys())
+        current_keys = set(self.solved_by_difficulty.keys()) | set(
+            self.unsolved_by_difficulty.keys()
         )
+
+        if baseline_hist:
+            baseline_keys = set(baseline_hist.solved_by_difficulty.keys()) | set(
+                baseline_hist.unsolved_by_difficulty.keys()
+            )
+            all_difficulties = sorted(current_keys | baseline_keys)
+        else:
+            all_difficulties = sorted(current_keys)
+
         if not all_difficulties:
             print("No data collected.")
             return
 
-        print(f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} | {'Solve Rate':>12}")
-        print(f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} + {'-'*12:->12}")
+        if baseline_hist:
+            print(
+                f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} | {'Rate':>8} | {'Base':>8} | {'Delta':>8}"
+            )
+            print(
+                f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} + {'-'*8:->8} + {'-'*8:->8} + {'-'*8:->8}"
+            )
+        else:
+            print(
+                f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} | {'Solve Rate':>12}"
+            )
+            print(f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} + {'-'*12:->12}")
+
         for blanks in all_difficulties:
             solved = self.solved_by_difficulty.get(blanks, 0)
             unsolved = self.unsolved_by_difficulty.get(blanks, 0)
             total = solved + unsolved
-            solve_rate = f"{(solved / total * 100):.1f}%" if total > 0 else "N/A"
-            print(f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}")
+
+            rate_val = solved / total if total > 0 else 0.0
+
+            if baseline_hist:
+                b_solved = baseline_hist.solved_by_difficulty.get(blanks, 0)
+                b_unsolved = baseline_hist.unsolved_by_difficulty.get(blanks, 0)
+                b_total = b_solved + b_unsolved
+                b_rate_val = b_solved / b_total if b_total > 0 else 0.0
+
+                solve_rate_str = f"{rate_val * 100:.1f}%" if total > 0 else "-"
+                b_rate_str = f"{b_rate_val * 100:.1f}%" if b_total > 0 else "-"
+                delta = rate_val - b_rate_val
+                delta_str = (
+                    f"{delta * 100:=+6.1f}%" if (total > 0 or b_total > 0) else "-"
+                )
+
+                print(
+                    f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate_str:>8s} | {b_rate_str:>8s} | {delta_str:>8s}"
+                )
+            else:
+                solve_rate = f"{(rate_val * 100):.1f}%" if total > 0 else "N/A"
+                print(
+                    f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}"
+                )
+
+        if baseline_hist:
+            current_score = self.get_capability_score()
+            baseline_score = baseline_hist.get_capability_score()
+            improvement = current_score - baseline_score
+            print()
+            print(f"Baseline Capability Score:  {baseline_score:.3f}")
+            print(f"Current  Capability Score:  {current_score:.3f}")
+            print(f"Improvement:               {improvement:+.3f}")
+            print()
 
     def get_capability_score(self, use_best_100: bool = False) -> float:
         """
@@ -819,6 +872,47 @@ class DifficultyHistogram:
         )
 
         return float(max_100_diff) + fractional_part
+
+    def save_to_csv(self, filename: str):
+        """Saves the histogram data to a CSV file."""
+        all_difficulties = sorted(
+            set(self.solved_by_difficulty.keys())
+            | set(self.unsolved_by_difficulty.keys())
+        )
+        try:
+            with open(filename, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["Blanks", "Solved", "Unsolved", "SolveRate"])
+                for blanks in all_difficulties:
+                    solved = self.solved_by_difficulty.get(blanks, 0)
+                    unsolved = self.unsolved_by_difficulty.get(blanks, 0)
+                    total = solved + unsolved
+                    solve_rate = solved / total if total > 0 else 0.0
+                    writer.writerow([blanks, solved, unsolved, f"{solve_rate:.4f}"])
+            print(f"Test results saved to baseline file: {filename}")
+        except IOError as e:
+            print(f"Error saving baseline file {filename}: {e}")
+
+    @classmethod
+    def load_from_csv(cls, filename: str):
+        """Loads histogram data from a CSV file."""
+        histogram = cls()
+        try:
+            with open(filename, "r", newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    blanks = int(row["Blanks"])
+                    solved = int(row["Solved"])
+                    unsolved = int(row["Unsolved"])
+                    histogram.solved_by_difficulty[blanks] = solved
+                    histogram.unsolved_by_difficulty[blanks] = unsolved
+            return histogram
+        except FileNotFoundError:
+            print(f"Baseline file not found: {filename}")
+            return None
+        except Exception as e:
+            print(f"Error loading baseline from {filename}: {e}")
+            return None
 
 
 def get_action(
@@ -1580,9 +1674,35 @@ def test(args, env, policy_net) -> int:
             ]
         )
     )
-    histogram.log("Test Performance by Difficulty")
-    capability_score = histogram.get_capability_score()
-    print(f"Final Capability Score: {capability_score:.3f}")
+
+    baseline_hist = None
+    baseline_score = None
+    if args.compare_baseline:
+        baseline_path = args.compare_baseline
+        if not baseline_path.endswith(".csv"):
+            baseline_path += ".test.csv"
+
+        baseline_hist = DifficultyHistogram.load_from_csv(baseline_path)
+        baseline_score = baseline_hist.get_capability_score()
+        print(f"Loaded test performance baseline from \"{baseline_path}\"")
+    histogram.log("Test Performance by Difficulty", baseline_hist)
+    # capability_score = histogram.get_capability_score()
+    # diff_str = ""
+    # if baseline_score is not None:
+    #     diff = capability_score - baseline_score
+    #     diff_str = f"({'+' if diff >= 0 else ''}{diff:.3f} from baseline {baseline_score:.3f})"
+    # print(f"Final Capability Score: {capability_score:.3f}{diff_str}")
+
+    if args.save_baseline:
+        if args.load_model:
+            base_name, _ = os.path.splitext(args.load_model)
+        elif args.save_model:
+            base_name, _ = os.path.splitext(args.save_model)
+        else:
+            base_name = "model_baseline"
+        baseline_path = f"{base_name}.test.csv"
+        histogram.save_to_csv(baseline_path)
+        print(f"Saved test performance baseline to \"{baseline_path}\"")
 
     return 0
 
@@ -1738,6 +1858,19 @@ def parse_args():
         type=int,
         default=max(1, mp.cpu_count() - 2),
         help="Number of CPU workers for puzzle generation.",
+    )
+    parser.add_argument(
+        "--save_baseline",
+        action="store_true",
+        help="Save test results as a baseline CSV file"
+          " (name derived from model filename with suffix \".model_baseline.csv\","
+          " or \"model_baseline.test.csv\").",
+    )
+    parser.add_argument(
+        "--compare_baseline",
+        type=str,
+        default=None,
+        help="Path to a baseline model or CSV file to compare test results against.",
     )
 
     args = parser.parse_args()
