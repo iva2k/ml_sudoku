@@ -8,31 +8,67 @@ It uses a Deep Q-Network (DQN) with various architectural enhancements and train
 
 ### 1.1 Sudoku Rules
 
-"Sudoku" is a puzzle, where an initial 9x9 grid is given with some cells filled in with numbers. The goal is to fill all blank cells with numbers 1 through 9 such, tha each unit (row, column and nine 3x3 boxes) has all digits 1 thru 9 without repeating any digits. The puzzle should be solved without guessing, by pure logic deductions. The puzzle should have only 1 valid solution. It is possible to create intital grids with multiple solutions, but they are considered not valid sudoku puzzles.
+"Sudoku" is a logic-based combinatorial number-placement puzzle. An initial 9x9 grid is provided with some cells partially filled. The objective is to fill the remaining blank cells with digits 1 through 9 such that:
 
-### 1.2. Sudoku Patterns
+1. Each row contains all digits 1-9 exactly once.
+2. Each column contains all digits 1-9 exactly once.
+3. Each of the nine 3x3 subgrids (boxes) contains all digits 1-9 exactly once.
 
-To solve Sudoku at a human expert level, a model must master these patterns:
+A valid Sudoku puzzle must have exactly **one unique solution** and should be solvable by pure logic without guessing.
 
-#### 1.2.1. Naked & Hidden Singles
+### 1.2. Sudoku Patterns & Strategies
 
-A cell has only one candidate, or a candidate appears only once in a unit (row/col/box).
+To solve Sudoku at a human expert level, a model must master a hierarchy of logical patterns, ranging from simple counting to complex graph-based deductions.
 
-#### 1.2.2. Intersections (Pointing Pairs / Box-Line Reduction)
+#### 1.2.1. Singles (Naked & Hidden)
 
-A candidate in a box is restricted to a single row, eliminating that candidate from the rest of the row.
+* **Naked Single:** A cell has only one possible candidate digit remaining.
+* **Hidden Single:** A digit appears as a candidate in only one cell within a unit (row, column, or box), even if that cell contains other candidates.
 
-#### 1.2.3. Subsets (Naked/Hidden Pairs, Triples, Quads)
+#### 1.2.2. Intersections (Locked Candidates)
 
-$N$ cells in a unit share $N$ candidates. This eliminates these candidates from all other cells in the unit.
+* **Pointing:** If a candidate in a box is restricted to a single row or column, it can be eliminated from the rest of that row or column outside the box.
+* **Claiming (Box-Line Reduction):** If a candidate in a row or column is restricted to a single box, it can be eliminated from the rest of that box.
 
-#### 1.2.4. Fish (X-Wing, Swordfish, Jellyfish)
+#### 1.2.3. Subsets (Naked & Hidden)
 
-A candidate appears exactly twice in $N$ rows, and these align in $N$ columns.
+* **Naked Subset:** If $N$ cells in a unit contain exactly the same $N$ candidates (or a subset thereof), those candidates can be eliminated from all other cells in that unit. (e.g., Pairs, Triples, Quads).
+* **Hidden Subset:** If $N$ candidates appear *only* in $N$ cells within a unit, then all other candidates can be removed from those $N$ cells.
 
-#### 1.2.5. Chains & Coloring (XY-Wing, Simple Coloring)
+#### 1.2.4. Fish (Single Digit Patterns)
 
-Long chains of implications (If A is 1 $\to$ B is not 1 $\to$ C is 1...).
+Patterns involving a single digit's positions across multiple rows and columns.
+
+* **X-Wing:** A digit appears exactly twice in 2 rows, and these occurrences align in the same 2 columns. The digit can be eliminated from those columns in other rows.
+* **Swordfish / Jellyfish:** Generalizations of X-Wing to 3 rows/cols and 4 rows/cols respectively.
+* **Finned / Sashimi Fish:** Variations where the alignment is imperfect, but eliminations are still possible in specific cells.
+
+#### 1.2.5. Wings (Bent Sets)
+
+Patterns involving interactions between three or more cells (often bi-value) that are not in a straight line.
+
+* **XY-Wing:** A "pivot" cell (candidates AB) sees two "pincers" (AC and BC). Regardless of whether the pivot is A or B, one pincer must be C. Any cell seeing both pincers cannot be C.
+* **XYZ-Wing:** A pivot (XYZ) sees pincers (XZ and YZ).
+* **W-Wing:** Two identical bi-value cells (AB) are connected by a strong link on digit A. Any cell seeing both 'B's can eliminate B.
+
+#### 1.2.6. Single Digit Chains
+
+* **Skyscraper:** Two rows have a digit in only two cells. Two of these align in a column. The other two are "roof" tips. Any cell seeing both tips cannot contain the digit.
+* **2-String Kite:** A digit is restricted to row R and column C within a box. The other ends of the row/col constraints are connected.
+
+#### 1.2.7. Uniqueness Strategies (UR)
+
+Strategies relying on the rule that a valid Sudoku has a unique solution.
+
+* **Unique Rectangle (UR):** If four cells forming a rectangle in two rows and two columns contain only candidates AB, and the puzzle has a unique solution, this "deadly pattern" must be avoided. Logic is applied to force one cell to be something else.
+
+#### 1.2.8. Chains & Loops (AIC, Forcing Chains)
+
+Advanced graph theory applied to candidates.
+
+* **Simple Coloring:** Using two colors to track a digit's conjugate pairs (cells where a digit must be either A or B). If a cell sees both colors, the digit is impossible there.
+* **Alternating Inference Chains (AIC):** A sequence of implications ("If A is true, B is false; if B is false, C is true...") that proves a candidate is either true or false, or that two candidates are linked.
+* **Forcing Chains:** Multiple chains starting from a cell's candidates all lead to the same result (e.g., "Whether cell X is 1 or 2, cell Y cannot be 5").
 
 ## 2. 🧠 Low-Level RL Concepts
 
