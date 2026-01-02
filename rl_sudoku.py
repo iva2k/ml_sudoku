@@ -821,6 +821,12 @@ class DifficultyHistogram:
             print(f"Current  Capability Score:  {current_score:.3f}")
             print(f"Improvement:               {improvement:+.3f}")
             print()
+        else:
+            current_score = self.get_capability_score()
+            print()
+            print(f"Current  Capability Score:  {current_score:.3f}")
+            print()
+
 
     def get_capability_score(self, use_best_100: bool = False) -> float:
         """
@@ -881,7 +887,7 @@ class DifficultyHistogram:
             | set(self.unsolved_by_difficulty.keys())
         )
         try:
-            with open(filename, "w", newline="") as csvfile:
+            with open(filename, "w", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(["Blanks", "Solved", "Unsolved", "SolveRate"])
                 for blanks in all_difficulties:
@@ -899,7 +905,7 @@ class DifficultyHistogram:
         """Loads histogram data from a CSV file."""
         histogram = cls()
         try:
-            with open(filename, "r", newline="") as csvfile:
+            with open(filename, "r", newline="", encoding="utf-8") as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
                     blanks = int(row["Blanks"])
@@ -1677,22 +1683,14 @@ def test(args, env, policy_net) -> int:
     )
 
     baseline_hist = None
-    baseline_score = None
     if args.compare_baseline:
         baseline_path = args.compare_baseline
         if not baseline_path.endswith(".csv"):
             baseline_path += ".test.csv"
 
         baseline_hist = DifficultyHistogram.load_from_csv(baseline_path)
-        baseline_score = baseline_hist.get_capability_score()
         print(f"Loaded test performance baseline from \"{baseline_path}\"")
     histogram.log("Test Performance by Difficulty", baseline_hist)
-    # capability_score = histogram.get_capability_score()
-    # diff_str = ""
-    # if baseline_score is not None:
-    #     diff = capability_score - baseline_score
-    #     diff_str = f"({'+' if diff >= 0 else ''}{diff:.3f} from baseline {baseline_score:.3f})"
-    # print(f"Final Capability Score: {capability_score:.3f}{diff_str}")
 
     if args.save_baseline:
         if args.load_model:
