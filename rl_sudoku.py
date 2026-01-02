@@ -72,12 +72,12 @@ EPS_START = 1.0
 EPS_END = 0.05  # A slightly higher floor can encourage exploration on harder puzzles
 EPS_DECAY = 0.9997  # Faster decay to encourage exploitation sooner
 TARGET_UPDATE = 10  # Frequency (in episodes) to update the target network
-MEMORY_CAPACITY = 100000 # Increased for better PER performance
+MEMORY_CAPACITY = 100000  # Increased for better PER performance
 BATCH_SIZE = 128  # Larger batch size can stabilize training
 LR = 0.00025  # Slightly higher learning rate
 MAX_EPISODES = 50000
 PONDER_PENALTY = 0.1  # Increased penalty for each "thinking" step in ACT models
-PONDER_PENALTY_START = 0.0  # Start at 0 to allow "deep thinking" learning before optimizing for speed
+PONDER_PENALTY_START = 0.0  # Start at 0 to allow "deep thinking" before optimizing for speed
 PONDER_PENALTY_ANNEAL_EPISODES = 5000
 WEIGHT_DECAY = 0.01
 
@@ -90,6 +90,7 @@ TEST_DIFFICULTY_MIN = 3
 TEST_DIFFICULTY_MAX = 61
 
 EXPLORE_MASKING_GPU = True  # Use GPU for exploration masking
+
 
 def _puzzle_worker(
     queue: mp.Queue,
@@ -808,9 +809,7 @@ class DifficultyHistogram:
                 )
             else:
                 solve_rate = f"{(rate_val * 100):.1f}%" if total > 0 else "N/A"
-                print(
-                    f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}"
-                )
+                print(f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate:>12s}")
 
         if baseline_hist:
             current_score = self.get_capability_score()
@@ -1126,10 +1125,10 @@ def optimize_model(
     if ponder_cost is None:
         return (0.0, 0.0, 0.0)
     return (
-            ponder_cost.min().item(),
-            ponder_cost.mean().item(),
-            ponder_cost.max().item(),
-         )
+        ponder_cost.min().item(),
+        ponder_cost.mean().item(),
+        ponder_cost.max().item(),
+    )
 
 
 def prevent_sleep():
@@ -1280,9 +1279,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
             final_episode = i_episode == args.start_episode + args.episodes - 1
 
             # 1. Adaptive Curriculum Learning
-            new_level = check_curriculum_progress(
-                curriculum_level, recent_solves
-            )
+            new_level = check_curriculum_progress(curriculum_level, recent_solves)
             if new_level != curriculum_level:
                 curriculum_level = new_level
                 # Reset window for new level
@@ -1296,7 +1293,9 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 env.puzzle_generator.set_difficulty(min_c, max_c)
 
             # Ponder Cost Annealing: Calculate current penalty for this episode
-            if not CURRICULUM_LEVELS[curriculum_level].get("apply_ponder_penalty", True):
+            if not CURRICULUM_LEVELS[curriculum_level].get(
+                "apply_ponder_penalty", True
+            ):
                 current_ponder_penalty = 0.0
             else:
                 progress = min(
@@ -1429,11 +1428,15 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 )
 
                 # Calculate curriculum progress string
-                curr_threshold = CURRICULUM_LEVELS[curriculum_level].get("solve_rate_threshold")
+                curr_threshold = CURRICULUM_LEVELS[curriculum_level].get(
+                    "solve_rate_threshold"
+                )
                 curr_progress_str = ""
                 if curr_threshold is not None and len(recent_solves) > 0:
                     current_rate = sum(recent_solves) / len(recent_solves)
-                    curr_progress_str = f" ({current_rate:3.0%} of {curr_threshold:3.0%})"
+                    curr_progress_str = (
+                        f" ({current_rate:3.0%} of {curr_threshold:3.0%})"
+                    )
 
                 print(
                     f"Episode {i_episode:6d}: "
@@ -1576,7 +1579,9 @@ def run_test_episode(args, env, policy_net, initial_state, show_boards=True):
     return is_solved, episode_reward, episode_steps, (p_min, p_mean, p_max)
 
 
-def log_test_result(env, i_game, num_generated_games, steps, final_reward, is_solved, ponder_stats):
+def log_test_result(
+    env, i_game, num_generated_games, steps, final_reward, is_solved, ponder_stats
+):
     """Helper function to log the results of a single test game."""
     stats = env.episode_stats
     solved_ratio = f"{stats['correct_moves']:2d}/{stats['blank_cells_start']:2d}"
@@ -1627,7 +1632,9 @@ def test(args, env, policy_net) -> int:
         total_reward += final_reward
         total_steps += steps
 
-        log_test_result(env, 0, num_generated_games, steps, final_reward, is_solved, ponder_stats)
+        log_test_result(
+            env, 0, num_generated_games, steps, final_reward, is_solved, ponder_stats
+        )
         histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
     # 2. Test on procedurally generated puzzles
@@ -1654,7 +1661,13 @@ def test(args, env, policy_net) -> int:
             total_steps += steps
 
             log_test_result(
-                env, i_game, num_generated_games, steps, final_reward, is_solved, ponder_stats
+                env,
+                i_game,
+                num_generated_games,
+                steps,
+                final_reward,
+                is_solved,
+                ponder_stats,
             )
             histogram.update(env.episode_stats.get("blank_cells_start"), is_solved)
 
@@ -1689,7 +1702,7 @@ def test(args, env, policy_net) -> int:
             baseline_path += ".test.csv"
 
         baseline_hist = DifficultyHistogram.load_from_csv(baseline_path)
-        print(f"Loaded test performance baseline from \"{baseline_path}\"")
+        print(f'Loaded test performance baseline from "{baseline_path}"')
     histogram.log("Test Performance by Difficulty", baseline_hist)
 
     if args.save_baseline:
@@ -1701,7 +1714,7 @@ def test(args, env, policy_net) -> int:
             base_name = "model_baseline"
         baseline_path = f"{base_name}.test.csv"
         histogram.save_to_csv(baseline_path)
-        print(f"Saved test performance baseline to \"{baseline_path}\"")
+        print(f'Saved test performance baseline to "{baseline_path}"')
 
     return 0
 
@@ -1862,8 +1875,8 @@ def parse_args():
         "--save_baseline",
         action="store_true",
         help="Save test results as a baseline CSV file"
-          " (name derived from model filename with suffix \".model_baseline.csv\","
-          " or \"model_baseline.test.csv\").",
+        ' (name derived from model filename with suffix ".model_baseline.csv",'
+        ' or "model_baseline.test.csv").',
     )
     parser.add_argument(
         "--compare_baseline",
