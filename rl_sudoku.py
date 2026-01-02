@@ -1270,7 +1270,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
         f"Starting Training "
         f"at episode {args.start_episode} "
         f"for {args.episodes} episodes, "
-        f"Curriculum Level: {curriculum_level} '{CURRICULUM_LEVELS[curriculum_level]['name']}'"
+        f"Curriculum Level: {curriculum_level+1} '{CURRICULUM_LEVELS[curriculum_level]['name']}'"
     )
     start_time = time.time()
 
@@ -1441,7 +1441,7 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
-                    f"Level: {curriculum_level:2d}/{len(CURRICULUM_LEVELS):2d}{curr_progress_str}, "
+                    f"Level: {curriculum_level+1:2d}/{len(CURRICULUM_LEVELS):2d}{curr_progress_str}, "
                     f"Steps: {episode_steps:3d}, "
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
@@ -1944,7 +1944,7 @@ def main() -> int:
             args.current_epsilon = checkpoint.get("current_epsilon", args.eps_start)
             print(f"Will resume training from episode {args.start_episode}.")
             print(
-                f"Starting curriculum level: {args.curriculum_level} '{CURRICULUM_LEVELS[args.curriculum_level]['name']}'."
+                f"Starting curriculum level: {args.curriculum_level+1} '{CURRICULUM_LEVELS[args.curriculum_level]['name']}'."
             )
         except FileNotFoundError:
             print(
