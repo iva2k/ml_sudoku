@@ -773,10 +773,12 @@ class DifficultyHistogram:
 
         if baseline_hist:
             print(
-                f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} | {'Rate':>8} | {'Base':>8} | {'Delta':>8}"
+                f"{'Blanks':>8} | {'Solved':>8} | {'Unsolved':>10} "
+                f"| {'Rate':>8} | {'Base':>8} | {'Delta':>8}"
             )
             print(
-                f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} + {'-'*8:->8} + {'-'*8:->8} + {'-'*8:->8}"
+                f"{'-'*8:->8} + {'-'*8:->8} + {'-'*10:->10} "
+                f"+ {'-'*8:->8} + {'-'*8:->8} + {'-'*8:->8}"
             )
         else:
             print(
@@ -805,7 +807,8 @@ class DifficultyHistogram:
                 )
 
                 print(
-                    f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate_str:>8s} | {b_rate_str:>8s} | {delta_str:>8s}"
+                    f"{blanks:8d} | {solved:8d} | {unsolved:10d} | {solve_rate_str:>8s} "
+                    f"| {b_rate_str:>8s} | {delta_str:>8s}"
                 )
             else:
                 solve_rate = f"{(rate_val * 100):.1f}%" if total > 0 else "N/A"
@@ -825,7 +828,6 @@ class DifficultyHistogram:
             print()
             print(f"Current  Capability Score:  {current_score:.3f}")
             print()
-
 
     def get_capability_score(self, use_best_100: bool = False) -> float:
         """
@@ -1441,7 +1443,8 @@ def train(args, env, policy_net, target_net, optimizer, memory) -> int:
                 print(
                     f"Episode {i_episode:6d}: "
                     # f"Level: {CURRICULUM_LEVELS[curriculum_level]['name']}, "
-                    f"Level: {curriculum_level+1:2d}/{len(CURRICULUM_LEVELS):2d}{curr_progress_str}, "
+                    f"Level: {curriculum_level+1:2d}/"
+                    f"{len(CURRICULUM_LEVELS):2d}{curr_progress_str}, "
                     f"Steps: {episode_steps:3d}, "
                     f"Epoch Steps: {epoch_steps_done:6d}, "
                     f"Epsilon: {max(args.eps_end, current_epsilon):.4f}, "
@@ -1944,7 +1947,8 @@ def main() -> int:
             args.current_epsilon = checkpoint.get("current_epsilon", args.eps_start)
             print(f"Will resume training from episode {args.start_episode}.")
             print(
-                f"Starting curriculum level: {args.curriculum_level+1} '{CURRICULUM_LEVELS[args.curriculum_level]['name']}'."
+                f"Starting curriculum level: {args.curriculum_level+1} "
+                f"\"{CURRICULUM_LEVELS[args.curriculum_level]['name']}\"."
             )
         except FileNotFoundError:
             print(
